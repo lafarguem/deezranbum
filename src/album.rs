@@ -83,6 +83,25 @@ pub async fn next(amount: usize, queue: QueueBehaviours, debug: bool) -> std::io
         _ => {
             for album in chosen {
                 println!("{}", album);
+                let add_to_queue = match queue {
+                    QueueBehaviours::True => true,
+                    QueueBehaviours::False => false,
+                    QueueBehaviours::Ask => {
+                        print!("Add to Deezer queue? [y/N] ");
+                        io::stdout().flush().ok();
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input).unwrap_or(0);
+                        input.trim().eq_ignore_ascii_case("y")
+                    }
+                };
+                if add_to_queue {
+                    match queue::add_to_queue(album, debug) {
+                        Ok(()) => println!("Added to Deezer queue."),
+                        Err(queue::QueueError::NoDeezerTab) =>
+                            eprintln!("Warning: no Deezer tab found in Chrome — skipping queue."),
+                        Err(e) => eprintln!("Warning: could not add to queue: {e}"),
+                    }
+                }
                 add_album(&mut state, album.clone());
             }
             save_state(&state)
