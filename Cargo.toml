@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Fetches a random deezer album, without repeats between sessions"
 license = "MIT"
+homepage = "https://github.com/lafarguem/deezranbum"
+repository = "https://github.com/lafarguem/deezranbum"
 
 
 [dependencies]
@@ -15,3 +17,8 @@ clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 directories-next = "2.0.0"
 tempfile = "3.26.0"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
