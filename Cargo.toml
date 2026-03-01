@@ -17,6 +17,10 @@ clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 directories-next = "2.0.0"
 tempfile = "3.26.0"
+futures-util = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-tungstenite = "0.21"
 
 # The profile that 'dist' will build with
 [profile.dist]

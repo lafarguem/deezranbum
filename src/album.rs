@@ -95,10 +95,13 @@ pub async fn next(amount: usize, queue: QueueBehaviours, debug: bool) -> std::io
                     }
                 };
                 if add_to_queue {
-                    match queue::add_to_queue(album, debug) {
+                    match queue::add_to_queue(album, debug).await {
                         Ok(()) => println!("Added to Deezer queue."),
                         Err(queue::QueueError::NoDeezerTab) =>
                             eprintln!("Warning: no Deezer tab found in Chrome — skipping queue."),
+                        #[cfg(target_os = "linux")]
+                        Err(queue::QueueError::NoBrowserDebugPort) =>
+                            eprintln!("Warning: no browser with --remote-debugging-port found — skipping queue."),
                         Err(e) => eprintln!("Warning: could not add to queue: {e}"),
                     }
                 }
