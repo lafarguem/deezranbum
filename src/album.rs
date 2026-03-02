@@ -24,7 +24,7 @@ fn add_album(state: &mut AppState, album: Album) {
 
 async fn get_albums(state: &AppState) -> Result<Vec<Album>, reqwest::Error> {
     let client = reqwest::Client::new();
-    let url = format!("{}{}/albums", BASE_URL, state.user_id);
+    let url = format!("{}{}/albums?limit=1000", BASE_URL, state.user_id);
 
     let response= client.get(url).send().await?;
     let albums: DeezerResponse  = response.json().await?;
