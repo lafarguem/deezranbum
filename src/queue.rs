@@ -1,4 +1,3 @@
-use crate::storage::Album;
 use std::fmt;
 use std::fs;
 use std::process::Command;
@@ -46,8 +45,8 @@ fn build_js(album_id: u64) -> String {
     include_str!("js/queue_outer.js").replace("__MAIN_WORLD_JS_JSON__", &inject_js_json)
 }
 
-pub fn add_to_queue(album: &Album, debug: bool) -> Result<(), QueueError> {
-    let js = build_js(album.id);
+pub fn add_to_queue(album_id: u64, debug: bool) -> Result<(), QueueError> {
+    let js = build_js(album_id);
 
     let file = NamedTempFile::new().map_err(QueueError::SpawnFailed)?;
 

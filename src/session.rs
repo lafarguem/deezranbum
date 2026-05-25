@@ -1,25 +1,25 @@
-use std::io::Error;
+use std::io;
 
 use crate::{
-    SessionCommands,
-    storage::{AppState, load_state, save_state},
+    SessionCommands, album, picker,
+    storage::{Album, AppState, load_state, save_state},
 };
 
 pub fn handle(command: SessionCommands) {
     match command {
         SessionCommands::Clear => clear(),
         SessionCommands::History => history(),
-        SessionCommands::Remove { album_name } => match remove(album_name) {
-            Ok(()) => (),
-            _ => print!("Album not found"),
-        },
+        SessionCommands::Remove { album_name } => {
+            if let Err(e) = remove(album_name) {
+                println!("Error: {}", e);
+            }
+        }
     }
 }
 
 pub fn clear_state(state: &mut AppState) {
     state.album_ids.clear();
     state.album_order.clear();
-    state.albums.clear();
 }
 
 pub fn clear() {
@@ -42,22 +42,48 @@ fn history() {
     }
 }
 
-fn remove(album_title: String) -> Result<(), Error> {
-    let mut state = load_state();
-    let id = match state
-        .albums
-        .iter()
-        .find(|(_, album)| album.title == album_title)
-    {
-        Some((id, _)) => id,
-        None => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Album not found",
-            ));
-        }
-    };
+pub fn remove_album(state: &mut AppState, id: &u64) {
     state.album_ids.remove(id);
-    save_state(&state)?;
-    Ok(())
+    state.album_order.retain(|x| x != id);
+}
+
+fn session_albums(state: &AppState) -> Vec<Album> {
+    state
+        .album_order
+        .iter()
+        .filter_map(|id| state.albums.get(id).cloned())
+        .collect()
+}
+
+fn remove(query: Option<String>) -> io::Result<()> {
+    let mut state = load_state();
+    let albums = session_albums(&state);
+
+    if albums.is_empty() {
+        println!("No albums in session");
+        return Ok(());
+    }
+
+    let to_remove: Vec<Album> = match query {
+        None => picker::pick(&albums, None)?,
+        Some(q) => match album::best_match(&q, &albums) {
+            Some(a) => vec![a.clone()],
+            None => {
+                println!("No album matched '{}'", q);
+                return Ok(());
+            }
+        },
+    };
+
+    if to_remove.is_empty() {
+        println!("No albums selected");
+        return Ok(());
+    }
+
+    for a in &to_remove {
+        remove_album(&mut state, &a.id);
+        println!("Removed: {}", a);
+    }
+
+    save_state(&state)
 }
