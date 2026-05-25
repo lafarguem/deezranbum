@@ -17,7 +17,6 @@ struct Cli {
     command: Commands,
 }
 
-
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum QueueBehaviours {
@@ -76,11 +75,11 @@ async fn main() {
         Commands::Session { command } => session::handle(command),
         Commands::Album { queue, amount } => match album::next(amount, queue, cli.debug).await {
             Ok(()) => (),
-            _ => println!("Error")
+            _ => println!("Error"),
         },
         Commands::User { user_id } => match user::set(user_id) {
             Ok(()) => (),
-            _ => println!("Error")
+            _ => println!("Error"),
         },
         Commands::Reset => storage::reset(),
     }

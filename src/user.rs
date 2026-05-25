@@ -1,4 +1,4 @@
-use crate::storage::{save_state, load_state};
+use crate::storage::{load_state, save_state};
 
 pub fn set(user_id: String) -> std::io::Result<()> {
     let mut state = load_state();

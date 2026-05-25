@@ -1,15 +1,22 @@
-use std::io::{self, Write};
+use std::{
+    error::Error,
+    io::{self, Write},
+};
 
+use crate::{
+    QueueBehaviours, queue, session,
+    storage::{Album, AppState, load_state, save_state},
+};
 use rand::seq::SliceRandom;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::{QueueBehaviours, queue, session, storage::{Album, AppState, load_state, save_state}};
 
 const BASE_URL: &str = "https://api.deezer.com/user/";
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 
 struct DeezerResponse {
-    data: Vec<Album>
+    data: Vec<Album>,
 }
 
 fn add_album(state: &mut AppState, album: Album) {
@@ -26,17 +33,39 @@ async fn get_albums(state: &AppState) -> Result<Vec<Album>, reqwest::Error> {
     let client = reqwest::Client::new();
     let url = format!("{}{}/albums?limit=1000", BASE_URL, state.user_id);
 
-    let response= client.get(url).send().await?;
-    let albums: DeezerResponse  = response.json().await?;
+    let response = client.get(url).send().await?;
+    let albums: DeezerResponse = response.json().await?;
+    let mut album_data = albums.data;
+    apply_album_redirects(&mut album_data, &client).await;
 
-    Ok(albums.data)
+    Ok(album_data)
 }
 
-fn choose_albums<'a>(
-    albums: &'a [Album],
-    state: &mut AppState,
-    amount: usize,
-) -> Vec<&'a Album> {
+async fn get_album_redirect(id: &u64, client: &Client) -> Result<u64, Box<dyn Error>> {
+    let final_url = client
+        .head(format!("https://www.deezer.com/album/{}", id))
+        .send()
+        .await?
+        .url()
+        .clone();
+    let real_id: u64 = final_url
+        .path_segments()
+        .and_then(|segs| segs.last())
+        .ok_or("missing album id in url")?
+        .parse()?;
+    return Ok(real_id);
+}
+
+async fn apply_album_redirects(albums: &mut Vec<Album>, client: &Client) {
+    for album in albums.iter_mut() {
+        album.id = match get_album_redirect(&album.id, &client).await {
+            Ok(id) => id,
+            Err(_e) => album.id,
+        }
+    }
+}
+
+fn choose_albums<'a>(albums: &'a [Album], state: &mut AppState, amount: usize) -> Vec<&'a Album> {
     let mut chosen: Vec<&Album> = Vec::new();
 
     let mut candidates: Vec<&Album> = albums
@@ -57,8 +86,10 @@ fn choose_albums<'a>(
     let remaining = amount - chosen.len();
 
     let mut rng = rand::thread_rng();
-    let mut random: Vec<&Album> =
-        candidates.choose_multiple(&mut rng, remaining).cloned().collect();
+    let mut random: Vec<&Album> = candidates
+        .choose_multiple(&mut rng, remaining)
+        .cloned()
+        .collect();
 
     chosen.append(&mut random);
 
@@ -97,14 +128,15 @@ pub async fn next(amount: usize, queue: QueueBehaviours, debug: bool) -> std::io
                 if add_to_queue {
                     match queue::add_to_queue(album, debug) {
                         Ok(()) => println!("Added to Deezer queue."),
-                        Err(queue::QueueError::NoDeezerTab) =>
-                            eprintln!("Warning: no Deezer tab found in Chrome — skipping queue."),
+                        Err(queue::QueueError::NoDeezerTab) => {
+                            eprintln!("Warning: no Deezer tab found in Chrome — skipping queue.")
+                        }
                         Err(e) => eprintln!("Warning: could not add to queue: {e}"),
                     }
                 }
                 add_album(&mut state, album.clone());
             }
             save_state(&state)
-        },
+        }
     }
 }

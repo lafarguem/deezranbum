@@ -1,5 +1,5 @@
-use std::fmt;
 use crate::storage::Album;
+use std::fmt;
 use std::fs;
 use std::process::Command;
 use tempfile::NamedTempFile;
@@ -31,30 +31,27 @@ fn build_js(album_id: u64) -> String {
     //
     // Layer order: queue_outer.js (JXA) → execute(queue_inject.js) → blob <script>(queue_main_world.js)
 
-    let main_world_js = include_str!("js/queue_main_world.js")
-        .replace("__ALBUM_ID__", &album_id.to_string());
+    let main_world_js =
+        include_str!("js/queue_main_world.js").replace("__ALBUM_ID__", &album_id.to_string());
 
-    let main_world_js_json = serde_json::to_string(&main_world_js)
-        .expect("failed to JSON-encode main world JS");
+    let main_world_js_json =
+        serde_json::to_string(&main_world_js).expect("failed to JSON-encode main world JS");
 
-    let inject_js = include_str!("js/queue_inject.js")
-        .replace("__MAIN_WORLD_JS_JSON__", &main_world_js_json);
+    let inject_js =
+        include_str!("js/queue_inject.js").replace("__MAIN_WORLD_JS_JSON__", &main_world_js_json);
 
-    let inject_js_json = serde_json::to_string(&inject_js)
-        .expect("failed to JSON-encode inject JS");
+    let inject_js_json =
+        serde_json::to_string(&inject_js).expect("failed to JSON-encode inject JS");
 
-    include_str!("js/queue_outer.js")
-        .replace("__MAIN_WORLD_JS_JSON__", &inject_js_json)
+    include_str!("js/queue_outer.js").replace("__MAIN_WORLD_JS_JSON__", &inject_js_json)
 }
 
 pub fn add_to_queue(album: &Album, debug: bool) -> Result<(), QueueError> {
     let js = build_js(album.id);
 
-    let file = NamedTempFile::new()
-        .map_err(QueueError::SpawnFailed)?;
+    let file = NamedTempFile::new().map_err(QueueError::SpawnFailed)?;
 
-    fs::write(file.path(), js)
-        .map_err(QueueError::SpawnFailed)?;
+    fs::write(file.path(), js).map_err(QueueError::SpawnFailed)?;
 
     let output = Command::new("osascript")
         .arg("-l")
@@ -101,7 +98,9 @@ pub fn add_to_queue(album: &Album, debug: bool) -> Result<(), QueueError> {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) {
                 let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok");
                 if status != "ok" {
-                    return Err(QueueError::ScriptError(format!("js reported status={status}")));
+                    return Err(QueueError::ScriptError(format!(
+                        "js reported status={status}"
+                    )));
                 }
             }
         }
