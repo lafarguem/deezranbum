@@ -1,11 +1,10 @@
 use directories_next::ProjectDirs;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
-use std::{collections::HashMap, path::PathBuf};
 use std::fs::File;
-use serde::{Serialize, Deserialize};
 use std::io::ErrorKind;
-
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Artist {
@@ -17,7 +16,7 @@ pub struct Album {
     pub id: u64,
     pub title: String,
     pub link: String,
-    pub artist: Artist
+    pub artist: Artist,
 }
 
 impl fmt::Display for Album {
@@ -31,13 +30,13 @@ pub struct AppState {
     pub user_id: String,
     pub album_ids: HashSet<u64>,
     pub album_order: Vec<u64>,
-    pub albums: HashMap<u64, Album>
+    pub albums: HashMap<u64, Album>,
+    pub playlists: HashMap<String, HashSet<u64>>,
 }
 
 fn data_file() -> PathBuf {
     let proj_dirs =
-        ProjectDirs::from("com", "arugula", "randeezbum")
-            .expect("Could not determine directory");
+        ProjectDirs::from("com", "arugula", "randeezbum").expect("Could not determine directory");
 
     let dir = proj_dirs.data_dir();
     std::fs::create_dir_all(dir).unwrap();
@@ -51,9 +50,7 @@ pub fn load_state() -> AppState {
     match File::open(path) {
         Ok(file) => serde_json::from_reader(file).unwrap(),
 
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            AppState::default()
-        }
+        Err(e) if e.kind() == ErrorKind::NotFound => AppState::default(),
 
         Err(e) => panic!("{}", e),
     }
