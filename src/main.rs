@@ -2,6 +2,7 @@ mod album;
 mod picker;
 mod playlist;
 mod queue;
+mod replay;
 mod session;
 mod storage;
 mod user;
@@ -43,6 +44,15 @@ enum Commands {
         /// Skip adding album to Deezer queue
         #[arg(long, value_enum, default_value_t = QueueBehaviours::True)]
         queue: QueueBehaviours,
+    },
+
+    /// Replay albums from the session
+    Replay {
+        /// Starting session index
+        from: Option<usize>,
+
+        // Ending session index
+        to: Option<usize>,
     },
 
     /// Set user id
@@ -127,6 +137,7 @@ async fn main() {
                 println!("Error");
             }
         }
+        Commands::Replay { from, to } => replay::replay(from, to),
         Commands::User { user_id } => match user::set(user_id) {
             Ok(()) => (),
             _ => println!("Error"),

@@ -76,9 +76,8 @@ pub async fn play(
     let mut rng = thread_rng();
     album_ids.shuffle(&mut rng);
 
-    match number {
-        Some(n) => album_ids.truncate(n),
-        None => (),
+    if let Some(n) = number {
+        album_ids.truncate(n)
     }
 
     match album_ids.len() {
@@ -101,7 +100,7 @@ pub async fn play(
                     },
                 };
                 println!("{}", album);
-                handle_queue(id, queue, debug);
+                handle_queue(&id, queue, debug);
                 add_album(&mut state, id);
             }
             save_state(&state)?;
@@ -143,7 +142,7 @@ pub fn list_playlist(name: &str) -> Result<()> {
     };
 
     for id in playlist.iter() {
-        let album = match state.albums.get(&id) {
+        let album = match state.albums.get(id) {
             Some(album) => album,
             None => &Album {
                 id: *id,

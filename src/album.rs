@@ -58,13 +58,13 @@ async fn get_album_redirect(id: &u64, client: &Client) -> Result<u64, Box<dyn Er
         .clone();
     let real_id: u64 = final_url
         .path_segments()
-        .and_then(|segs| segs.filter(|seg| *seg != "").last())
+        .and_then(|mut segs| segs.rfind(|seg| !seg.is_empty()))
         .ok_or("missing album id in url")?
         .parse()?;
-    return Ok(real_id);
+    Ok(real_id)
 }
 
-async fn apply_album_redirects(albums: &mut Vec<Album>, client: &Client) {
+async fn apply_album_redirects(albums: &mut [Album], client: &Client) {
     let ids: Vec<u64> = albums.iter().map(|a| a.id).collect();
     let resolved: Vec<u64> = stream::iter(ids)
         .map(|id| async move { get_album_redirect(&id, client).await.unwrap_or(id) })
@@ -86,7 +86,7 @@ fn choose_albums<'a>(albums: &'a [Album], state: &mut AppState, amount: usize) -
         .collect();
 
     if candidates.len() < amount {
-        chosen.append(&mut candidates.iter().cloned().collect());
+        chosen.append(&mut candidates.to_vec());
         session::clear_state(state);
 
         candidates = albums
@@ -122,7 +122,7 @@ fn prompt_queue(queue: QueueBehaviours) -> bool {
     }
 }
 
-pub fn handle_queue(album_id: u64, queue: QueueBehaviours, debug: bool) {
+pub fn handle_queue(album_id: &u64, queue: QueueBehaviours, debug: bool) {
     if !prompt_queue(queue) {
         return;
     }
@@ -170,7 +170,7 @@ pub async fn next(amount: usize, queue: QueueBehaviours, debug: bool) -> std::io
         _ => {
             for album in chosen {
                 println!("{}", album);
-                handle_queue(album.id, queue, debug);
+                handle_queue(&album.id, queue, debug);
                 add_album(&mut state, album.id);
             }
             save_state(&state)
@@ -195,7 +195,7 @@ pub async fn pick_albums(
     if chosen.is_empty() {
         println!("No albums selected");
     }
-    return Ok(chosen);
+    Ok(chosen)
 }
 
 pub async fn pick(queue: QueueBehaviours, debug: bool) -> std::io::Result<()> {
@@ -208,7 +208,7 @@ pub async fn pick(queue: QueueBehaviours, debug: bool) -> std::io::Result<()> {
 
     for album in &chosen {
         println!("{}", album);
-        handle_queue(album.id, queue, debug);
+        handle_queue(&album.id, queue, debug);
         add_album(&mut state, album.id);
     }
 
@@ -230,7 +230,7 @@ pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> std::io
     };
 
     println!("{}", album);
-    handle_queue(album.id, queue, debug);
+    handle_queue(&album.id, queue, debug);
     add_album(&mut state, album.id);
     save_state(&state)
 }

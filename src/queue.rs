@@ -22,7 +22,7 @@ impl fmt::Display for QueueError {
 
 impl std::error::Error for QueueError {}
 
-fn build_js(album_id: u64) -> String {
+fn build_js(album_id: &u64) -> String {
     // tab.execute() in JXA runs in an isolated world — page JS globals like
     // window.dzPlayer are invisible there. To reach the main world we inject a
     // <script src=blob:...> via queue_inject.js; the blob URL bypasses CSP and
@@ -45,7 +45,7 @@ fn build_js(album_id: u64) -> String {
     include_str!("js/queue_outer.js").replace("__MAIN_WORLD_JS_JSON__", &inject_js_json)
 }
 
-pub fn add_to_queue(album_id: u64, debug: bool) -> Result<(), QueueError> {
+pub fn add_to_queue(album_id: &u64, debug: bool) -> Result<(), QueueError> {
     let js = build_js(album_id);
 
     let file = NamedTempFile::new().map_err(QueueError::SpawnFailed)?;
@@ -70,20 +70,20 @@ pub fn add_to_queue(album_id: u64, debug: bool) -> Result<(), QueueError> {
     let payload = lines.next().unwrap_or("").trim();
 
     // Parse JS payload; print debug info only when --debug is set.
-    if !payload.is_empty() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) {
-            if debug {
-                let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("?");
-                eprintln!("[queue] js status: {status}");
-                if let Some(logs) = v.get("logs").and_then(|l| l.as_str()) {
-                    if !logs.is_empty() {
-                        eprintln!("[queue] js logs:\n{logs}");
-                    }
-                }
-                if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-                    eprintln!("[queue] js error: {err}");
-                }
-            }
+    if !payload.is_empty()
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(payload)
+        && debug
+    {
+        let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("?");
+        eprintln!("[queue] js status: {status}");
+        if let Some(logs) = v.get("logs").and_then(|l| l.as_str())
+            && !logs.is_empty()
+        {
+            eprintln!("[queue] js logs:\n{logs}");
+        }
+
+        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+            eprintln!("[queue] js error: {err}");
         }
     }
 
