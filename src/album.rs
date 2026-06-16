@@ -5,9 +5,12 @@ use std::{
 };
 
 use crate::{
-    QueueBehaviours, picker, queue, session,
-    storage::{Album, AppState, load_state, save_state},
+    QueueBehaviours,
+    error::{AppError, Result},
+    picker, queue, session,
+    storage::{Album, ApiAlbum, AppState, UserAlbum, load_state, save_state},
 };
+use chrono::{Duration, NaiveDate, Utc};
 use futures::stream::{self, StreamExt};
 use nucleo_matcher::{
     Config, Matcher, Utf32Str,
@@ -17,14 +20,31 @@ use rand::seq::SliceRandom;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-const REDIRECT_CONCURRENCY: usize = 32;
+/// Deezer rate-limits to roughly 50 requests / 5s; keep concurrency well under
+/// that so a full-library refresh doesn't trip the quota.
+const FETCH_CONCURRENCY: usize = 8;
 
-const BASE_URL: &str = "https://api.deezer.com/user/";
+/// Deezer's error `code` for "Quota limit exceeded".
+const QUOTA_EXCEEDED_CODE: i64 = 4;
+
+const MAX_RETRIES: u32 = 5;
+
+const BASE_URL: &str = "https://api.deezer.com/";
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-
 struct DeezerResponse {
-    data: Vec<Album>,
+    data: Vec<UserAlbum>,
+}
+
+pub struct AlbumFilters {
+    pub min_duration: Option<u64>,
+    pub max_duration: Option<u64>,
+    pub before: Option<NaiveDate>,
+    pub after: Option<NaiveDate>,
+    pub genre: Vec<String>,
+    pub exclude_genre: Vec<String>,
+    pub artist: Vec<String>,
+    pub exclude_artist: Vec<String>,
 }
 
 pub fn add_album(state: &mut AppState, id: u64) {
@@ -33,79 +53,204 @@ pub fn add_album(state: &mut AppState, id: u64) {
     }
 }
 
-async fn get_albums(state: &mut AppState) -> Result<Vec<Album>, reqwest::Error> {
+pub async fn get_albums(state: &mut AppState, force_fetch: bool) -> Result<Vec<Album>> {
     let client = reqwest::Client::new();
-    let url = format!("{}{}/albums?limit=1000", BASE_URL, state.user_id);
+    let url = format!("{}/user/{}/albums?limit=1000", BASE_URL, state.user_id);
 
     let response = client.get(url).send().await?;
-    let albums: DeezerResponse = response.json().await?;
-    let mut album_data = albums.data;
-    apply_album_redirects(&mut album_data, &client).await;
+    let user_albums: DeezerResponse = response.json().await?;
+    let album_data = user_albums.data;
+    let now = Utc::now().naive_utc();
+    let ff = force_fetch || (now - state.last_redirect_update > Duration::days(30));
+    let albums = update_albums(state, album_data, &client, ff).await;
+    if ff {
+        state.last_redirect_update = now;
+    }
 
     state
         .albums
-        .extend(album_data.iter().cloned().map(|a| (a.id, a)));
+        .extend(albums.iter().cloned().map(|a| (a.id, a)));
 
-    Ok(album_data)
+    Ok(albums)
 }
 
-async fn get_album_redirect(id: &u64, client: &Client) -> Result<u64, Box<dyn Error>> {
-    let final_url = client
-        .head(format!("https://www.deezer.com/album/{}", id))
-        .send()
-        .await?
-        .url()
-        .clone();
-    let real_id: u64 = final_url
-        .path_segments()
-        .and_then(|mut segs| segs.rfind(|seg| !seg.is_empty()))
-        .ok_or("missing album id in url")?
-        .parse()?;
-    Ok(real_id)
+#[derive(Deserialize)]
+struct DeezerErrorBody {
+    error: DeezerError,
 }
 
-async fn apply_album_redirects(albums: &mut [Album], client: &Client) {
-    let ids: Vec<u64> = albums.iter().map(|a| a.id).collect();
-    let resolved: Vec<u64> = stream::iter(ids)
-        .map(|id| async move { get_album_redirect(&id, client).await.unwrap_or(id) })
-        .buffered(REDIRECT_CONCURRENCY)
+#[derive(Deserialize)]
+struct DeezerError {
+    code: i64,
+    message: String,
+}
+
+async fn update_album(id: &u64, client: &Client) -> std::result::Result<Album, Box<dyn Error>> {
+    for attempt in 0..MAX_RETRIES {
+        let body = client
+            .get(format!("{}/album/{}", BASE_URL, id))
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        // Deezer returns 200 with an `{ "error": {...} }` body for failures
+        // (quota, unknown album, …) rather than an HTTP error status.
+        if let Ok(err) = serde_json::from_str::<DeezerErrorBody>(&body) {
+            if err.error.code == QUOTA_EXCEEDED_CODE {
+                // Exponential backoff, then retry the same album.
+                let delay = 250u64 * 2u64.pow(attempt);
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                continue;
+            }
+            return Err(format!("deezer error for album {id}: {}", err.error.message).into());
+        }
+
+        let api: ApiAlbum = serde_json::from_str(&body)?;
+        return Ok(Album::from_api(*id, api));
+    }
+
+    Err(format!("album {id}: rate limited, gave up after {MAX_RETRIES} retries").into())
+}
+
+async fn update_albums(
+    state: &AppState,
+    albums: Vec<UserAlbum>,
+    client: &Client,
+    fetch_all: bool,
+) -> Vec<Album> {
+    let mut updated_albums: Vec<Album> = Vec::new();
+    let mut missing_albums: Vec<UserAlbum> = Vec::new();
+    for album in albums {
+        if !fetch_all
+            && let Some(a) = state.albums.get(&album.id)
+            && a.has_metadata()
+        {
+            updated_albums.push(a.clone());
+        } else {
+            missing_albums.push(album);
+        }
+    }
+
+    let resolved: Vec<Album> = stream::iter(missing_albums)
+        .map(|album| async move {
+            match update_album(&album.id, client).await {
+                Ok(album) => album,
+                Err(e) => {
+                    eprintln!("warning: {e}; using partial metadata");
+                    Album::with_user_album(album)
+                }
+            }
+        })
+        .buffered(FETCH_CONCURRENCY)
         .collect()
         .await;
 
-    for (album, new_id) in albums.iter_mut().zip(resolved) {
-        album.id = new_id;
-    }
+    updated_albums.extend(resolved);
+    updated_albums
 }
 
-fn choose_albums<'a>(albums: &'a [Album], state: &mut AppState, amount: usize) -> Vec<&'a Album> {
-    let mut chosen: Vec<&Album> = Vec::new();
-
-    let mut candidates: Vec<&Album> = albums
+fn check_filters(album: &Album, filters: &AlbumFilters) -> bool {
+    if let Some(date) = filters.after {
+        match album.release_date {
+            Some(rd) if rd >= date => {}
+            _ => return false,
+        }
+    }
+    if let Some(date) = filters.before {
+        match album.release_date {
+            Some(rd) if rd <= date => {}
+            _ => return false,
+        }
+    }
+    if let Some(duration) = filters.max_duration
+        && album.duration > duration
+    {
+        return false;
+    }
+    if let Some(duration) = filters.min_duration
+        && album.duration < duration
+    {
+        return false;
+    }
+    let lowercase_genres: Vec<String> =
+        album.genres.iter().map(|g| g.name.to_lowercase()).collect();
+    let lowercase_genre_filter: Vec<String> =
+        filters.genre.iter().map(|g| g.to_lowercase()).collect();
+    if !lowercase_genre_filter.is_empty()
+        && !lowercase_genres
+            .iter()
+            .any(|g| lowercase_genre_filter.contains(g))
+    {
+        return false;
+    }
+    let lowercase_exlude_genre_filter: Vec<String> = filters
+        .exclude_genre
         .iter()
+        .map(|g| g.to_lowercase())
+        .collect();
+    if !lowercase_exlude_genre_filter.is_empty()
+        && lowercase_genres
+            .iter()
+            .any(|g| lowercase_exlude_genre_filter.contains(g))
+    {
+        return false;
+    }
+    let artist = album.artist.name.to_lowercase();
+    if !filters.artist.is_empty() && !filters.artist.iter().any(|a| a.to_lowercase() == artist) {
+        return false;
+    }
+    if !filters.exclude_artist.is_empty()
+        && filters
+            .exclude_artist
+            .iter()
+            .any(|a| a.to_lowercase() == artist)
+    {
+        return false;
+    }
+    true
+}
+
+fn choose_albums<'a>(
+    albums: &'a [Album],
+    state: &mut AppState,
+    amount: usize,
+    filters: &AlbumFilters,
+) -> Result<Vec<&'a Album>> {
+    // Everything in the library matching the filters, ignoring "seen" status.
+    let matching: Vec<&Album> = albums
+        .iter()
+        .filter(|a| check_filters(a, filters))
+        .collect();
+
+    // If the library can't satisfy the request even after a reset, bail out
+    // before mutating any state so the session is left untouched.
+    if matching.len() < amount {
+        return Err(AppError::NotEnoughAlbums {
+            found: matching.len(),
+            requested: amount,
+        });
+    }
+
+    let mut candidates: Vec<&Album> = matching
+        .iter()
+        .copied()
         .filter(|a| !state.album_ids.contains(&a.id))
         .collect();
 
+    // Not enough unseen albums left — wrap around: clear the session and draw
+    // from the full matching set. Safe to clear now: we know `matching` is big
+    // enough, so this can't fail afterwards.
     if candidates.len() < amount {
-        chosen.append(&mut candidates.to_vec());
         session::clear_state(state);
-
-        candidates = albums
-            .iter()
-            .filter(|a| !state.album_ids.contains(&a.id))
-            .collect();
+        candidates = matching;
     }
 
-    let remaining = amount - chosen.len();
-
     let mut rng = rand::thread_rng();
-    let mut random: Vec<&Album> = candidates
-        .choose_multiple(&mut rng, remaining)
-        .cloned()
-        .collect();
-
-    chosen.append(&mut random);
-
-    chosen
+    Ok(candidates
+        .choose_multiple(&mut rng, amount)
+        .copied()
+        .collect())
 }
 
 fn prompt_queue(queue: QueueBehaviours) -> bool {
@@ -152,42 +297,30 @@ pub fn best_match<'a>(query: &str, albums: &'a [Album]) -> Option<&'a Album> {
         .map(|(_, a)| a)
 }
 
-pub async fn next(amount: usize, queue: QueueBehaviours, debug: bool) -> std::io::Result<()> {
+pub async fn next(
+    amount: usize,
+    queue: QueueBehaviours,
+    debug: bool,
+    filters: &AlbumFilters,
+) -> Result<()> {
     let mut state: AppState = load_state();
-    let albums = match get_albums(&mut state).await {
-        Ok(albums) => albums,
-        Err(e) => {
-            panic!("Failed to get albums: {:?}", e);
-        }
-    };
-    let chosen = choose_albums(&albums, &mut state, amount);
-    match chosen.len() {
-        0 => {
-            save_state(&state)?;
-            println!("No album found");
-            Ok(())
-        }
-        _ => {
-            for album in chosen {
-                println!("{}", album);
-                handle_queue(&album.id, queue, debug);
-                add_album(&mut state, album.id);
-            }
-            save_state(&state)
-        }
+    let albums = get_albums(&mut state, false).await?;
+    let chosen = choose_albums(&albums, &mut state, amount, filters)?;
+
+    for album in chosen {
+        println!("{}", album);
+        handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
+        add_album(&mut state, album.id);
     }
+    save_state(&state)?;
+    Ok(())
 }
 
 pub async fn pick_albums(
     state: &mut AppState,
     initial_selected: Option<&HashSet<u64>>,
-) -> std::io::Result<Vec<Album>> {
-    let albums = match get_albums(state).await {
-        Ok(albums) => albums,
-        Err(e) => {
-            panic!("Failed to get albums: {:?}", e);
-        }
-    };
+) -> Result<Vec<Album>> {
+    let albums = get_albums(state, false).await?;
 
     save_state(state)?;
 
@@ -198,7 +331,7 @@ pub async fn pick_albums(
     Ok(chosen)
 }
 
-pub async fn pick(queue: QueueBehaviours, debug: bool) -> std::io::Result<()> {
+pub async fn pick(queue: QueueBehaviours, debug: bool) -> Result<()> {
     let mut state: AppState = load_state();
 
     let chosen = pick_albums(&mut state, None).await?;
@@ -208,21 +341,17 @@ pub async fn pick(queue: QueueBehaviours, debug: bool) -> std::io::Result<()> {
 
     for album in &chosen {
         println!("{}", album);
-        handle_queue(&album.id, queue, debug);
+        handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
         add_album(&mut state, album.id);
     }
 
-    save_state(&state)
+    save_state(&state)?;
+    Ok(())
 }
 
-pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> std::io::Result<()> {
+pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> Result<()> {
     let mut state: AppState = load_state();
-    let albums = match get_albums(&mut state).await {
-        Ok(albums) => albums,
-        Err(e) => {
-            panic!("Failed to get albums: {:?}", e);
-        }
-    };
+    let albums = get_albums(&mut state, false).await?;
 
     let Some(album) = best_match(query, &albums) else {
         println!("No album matched '{}'", query);
@@ -230,7 +359,8 @@ pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> std::io
     };
 
     println!("{}", album);
-    handle_queue(&album.id, queue, debug);
+    handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
     add_album(&mut state, album.id);
-    save_state(&state)
+    save_state(&state)?;
+    Ok(())
 }

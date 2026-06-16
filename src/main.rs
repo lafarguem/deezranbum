@@ -1,4 +1,5 @@
 mod album;
+mod error;
 mod picker;
 mod playlist;
 mod queue;
@@ -7,7 +8,10 @@ mod session;
 mod storage;
 mod user;
 
+use chrono::NaiveDate;
 use clap::{Parser, Subcommand, ValueEnum};
+
+use crate::album::AlbumFilters;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -28,6 +32,58 @@ pub enum QueueBehaviours {
     True,
 }
 
+fn parse_partial_date(s: &str) -> Result<NaiveDate, String> {
+    let parts: Vec<&str> = s.split('-').collect();
+    let (y, m, d) = match parts.as_slice() {
+        [y] => (*y, "1", "1"),
+        [y, m] => (*y, *m, "1"),
+        [y, m, d] => (*y, *m, *d),
+        _ => return Err(format!("invalid date: {s}")),
+    };
+
+    let year: i32 = y.parse().map_err(|_| format!("invalid year: {y}"))?;
+    let month: u32 = m.parse().map_err(|_| format!("invalid month: {m}"))?;
+    let day: u32 = d.parse().map_err(|_| format!("invalid day: {d}"))?;
+
+    NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| format!("invalid date: {s}"))
+}
+
+fn parse_duration(s: &str) -> Result<u64, String> {
+    let mut total = 0u64;
+    let mut num = 0u64;
+    let mut pending = false; // have digits waiting for a unit?
+
+    for c in s.chars() {
+        match c {
+            '0'..='9' => {
+                num = num * 10 + (c as u64 - '0' as u64);
+                pending = true;
+            }
+            'h' => {
+                total += num * 3600;
+                num = 0;
+                pending = false;
+            }
+            'm' => {
+                total += num * 60;
+                num = 0;
+                pending = false;
+            }
+            's' => {
+                total += num;
+                num = 0;
+                pending = false;
+            }
+            _ => return Err(format!("invalid character '{c}' in duration")),
+        }
+    }
+
+    if pending {
+        return Err(format!("number with no unit in: {s}"));
+    }
+    Ok(total)
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Session-related commands
@@ -44,6 +100,30 @@ enum Commands {
         /// Skip adding album to Deezer queue
         #[arg(long, value_enum, default_value_t = QueueBehaviours::True)]
         queue: QueueBehaviours,
+
+        #[arg(long, value_parser = parse_partial_date)]
+        before: Option<NaiveDate>,
+
+        #[arg(long, value_parser = parse_partial_date)]
+        after: Option<NaiveDate>,
+
+        #[arg(long, value_parser = parse_duration)]
+        min_duration: Option<u64>,
+
+        #[arg(long, value_parser = parse_duration)]
+        max_duration: Option<u64>,
+
+        #[arg(long)]
+        genre: Vec<String>,
+
+        #[arg(long)]
+        exclude_genre: Vec<String>,
+
+        #[arg(long)]
+        artist: Vec<String>,
+
+        #[arg(long)]
+        exclude_artist: Vec<String>,
     },
 
     /// Replay albums from the session
@@ -68,6 +148,9 @@ enum Commands {
 
     /// Reset everything
     Reset,
+
+    /// Fetch and update all album metadata and redirects
+    Fetch,
 }
 
 #[derive(Subcommand)]
@@ -121,32 +204,63 @@ enum PlaylistSubcommands {
 
 #[tokio::main]
 async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> error::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Session { command } => session::handle(command),
-        Commands::Album { query, queue } => {
-            let result = match query {
-                None => album::pick(queue, cli.debug).await,
-                Some(q) => match q.parse::<usize>() {
-                    Ok(n) => album::next(n, queue, cli.debug).await,
-                    Err(_) => album::search(&q, queue, cli.debug).await,
-                },
-            };
-            if result.is_err() {
-                println!("Error");
-            }
-        }
-        Commands::Replay { from, to } => replay::replay(from, to),
-        Commands::User { user_id } => match user::set(user_id) {
-            Ok(()) => (),
-            _ => println!("Error"),
+        Commands::Album {
+            query,
+            queue,
+            after,
+            before,
+            min_duration,
+            max_duration,
+            genre,
+            exclude_genre,
+            artist,
+            exclude_artist,
+        } => match query {
+            None => album::pick(queue, cli.debug).await?,
+            Some(q) => match q.parse::<usize>() {
+                Ok(n) => {
+                    album::next(
+                        n,
+                        queue,
+                        cli.debug,
+                        &AlbumFilters {
+                            after,
+                            before,
+                            min_duration,
+                            max_duration,
+                            genre,
+                            exclude_genre,
+                            artist,
+                            exclude_artist,
+                        },
+                    )
+                    .await?
+                }
+                Err(_) => album::search(&q, queue, cli.debug).await?,
+            },
         },
-        Commands::Playlist { command } => {
-            if playlist::handle(command, cli.debug).await.is_err() {
-                println!("Error");
-            }
-        }
+        Commands::Replay { from, to } => replay::replay(from, to),
+        Commands::User { user_id } => user::set(user_id)?,
+        Commands::Playlist { command } => playlist::handle(command, cli.debug).await?,
         Commands::Reset => storage::reset(),
+        Commands::Fetch => {
+            let mut state = storage::load_state();
+            album::get_albums(&mut state, true).await?;
+            storage::save_state(&state)?;
+            println!("Library refreshed.");
+        }
     }
+
+    Ok(())
 }

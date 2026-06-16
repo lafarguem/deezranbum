@@ -1,12 +1,13 @@
-use std::{collections::HashSet, io::Result};
+use std::collections::HashSet;
 
 use rand::{seq::SliceRandom, thread_rng};
 
 use crate::{
     PlaylistSubcommands, QueueBehaviours,
     album::{add_album, handle_queue, pick_albums},
+    error::Result,
     session::remove_album,
-    storage::{Album, AppState, Artist, load_state, save_state},
+    storage::{Album, AppState, load_state, save_state},
 };
 
 pub async fn handle(command: PlaylistSubcommands, debug: bool) -> Result<()> {
@@ -43,7 +44,8 @@ pub async fn edit(name: &str) -> Result<()> {
     }
 
     state.playlists.insert(name.to_string(), chosen);
-    save_state(&state)
+    save_state(&state)?;
+    Ok(())
 }
 
 pub async fn play(
@@ -90,17 +92,10 @@ pub async fn play(
             for id in album_ids {
                 let album = match state.albums.get(&id) {
                     Some(album) => album,
-                    None => &Album {
-                        id,
-                        title: "Unknown".to_string(),
-                        link: format!("https://deezer.com/album/{}", id).to_string(),
-                        artist: Artist {
-                            name: "Unknown".to_string(),
-                        },
-                    },
+                    None => &Album::with_id(id),
                 };
                 println!("{}", album);
-                handle_queue(&id, queue, debug);
+                handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
                 add_album(&mut state, id);
             }
             save_state(&state)?;
@@ -119,7 +114,8 @@ pub fn delete(name: &str) -> Result<()> {
         None => println!("No playlist named {}", name),
     }
 
-    save_state(&state)
+    save_state(&state)?;
+    Ok(())
 }
 
 pub fn list() {
@@ -144,14 +140,7 @@ pub fn list_playlist(name: &str) -> Result<()> {
     for id in playlist.iter() {
         let album = match state.albums.get(id) {
             Some(album) => album,
-            None => &Album {
-                id: *id,
-                title: "Unknown".to_string(),
-                link: format!("https://deezer.com/album/{}", id).to_string(),
-                artist: Artist {
-                    name: "Unknown".to_string(),
-                },
-            },
+            None => &Album::with_id(*id),
         };
         println!("{}", album)
     }
