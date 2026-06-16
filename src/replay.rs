@@ -1,4 +1,8 @@
-use crate::{QueueBehaviours, album::handle_queue, storage::load_state};
+use crate::{
+    QueueBehaviours,
+    album::handle_queue,
+    storage::{Album, load_state},
+};
 use std::cmp;
 
 pub fn replay(from: Option<usize>, to: Option<usize>) {
@@ -14,7 +18,15 @@ pub fn replay(from: Option<usize>, to: Option<usize>) {
     for index in from..to {
         let album_id = state.album_order.get(index);
         if let Some(id) = album_id {
-            handle_queue(id, QueueBehaviours::True, false)
+            let album = match state.albums.get(id) {
+                Some(album) => album,
+                None => &Album::with_id(*id),
+            };
+            handle_queue(
+                &album.real_id.unwrap_or(album.id),
+                QueueBehaviours::True,
+                false,
+            )
         }
     }
 }
