@@ -51,6 +51,11 @@ pub fn add_album(state: &mut AppState, id: u64) {
     if state.album_ids.insert(id) {
         state.album_order.push(id);
     }
+    state
+        .history
+        .entry(id)
+        .or_default()
+        .push(chrono::Utc::now().naive_utc());
 }
 
 pub async fn get_albums(state: &mut AppState, force_fetch: bool) -> AppResult<Vec<Album>> {

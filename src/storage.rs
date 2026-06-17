@@ -179,6 +179,7 @@ pub struct AppState {
     pub album_order: Vec<u64>,
     pub albums: HashMap<u64, Album>,
     pub playlists: HashMap<String, HashSet<u64>>,
+    pub history: HashMap<u64, Vec<NaiveDateTime>>,
 }
 
 fn data_file() -> PathBuf {

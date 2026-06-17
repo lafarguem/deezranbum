@@ -6,6 +6,7 @@ mod playlist;
 mod queue;
 mod replay;
 mod session;
+mod stats;
 mod storage;
 mod user;
 
@@ -154,6 +155,9 @@ enum Commands {
 
     /// Fetch and update all album metadata and redirects
     Fetch,
+
+    /// Show stats
+    Stats,
 }
 
 #[derive(Subcommand)]
@@ -259,6 +263,7 @@ async fn run() -> AppResult<()> {
             storage::save_state(&state)?;
             println!("Library refreshed.");
         }
+        Commands::Stats => stats::general()?,
     }
 
     Ok(())

@@ -28,7 +28,10 @@ pub fn clear() -> AppResult<()> {
     clear_state(&mut state);
     match save_state(&state) {
         Ok(()) => Ok(()),
-        _ => Ok(println!("Error clearing application")),
+        _ => {
+            println!("Error clearing application");
+            Ok(())
+        }
     }
 }
 
