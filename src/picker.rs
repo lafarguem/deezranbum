@@ -61,7 +61,10 @@ fn score_all(
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
-pub fn pick(albums: &[Album], initial_selected: Option<&HashSet<u64>>) -> io::Result<Vec<Album>> {
+pub fn pick(
+    albums: Vec<&Album>,
+    initial_selected: Option<&HashSet<u64>>,
+) -> io::Result<Vec<Album>> {
     if albums.is_empty() {
         return Ok(Vec::new());
     }
@@ -232,6 +235,6 @@ pub fn pick(albums: &[Album], initial_selected: Option<&HashSet<u64>>) -> io::Re
     Ok(albums
         .iter()
         .filter(|a| id_set.contains(&a.id))
-        .cloned()
+        .map(|a| (*a).clone())
         .collect())
 }

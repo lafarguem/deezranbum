@@ -319,22 +319,28 @@ pub async fn next(
 pub async fn pick_albums(
     state: &mut AppState,
     initial_selected: Option<&HashSet<u64>>,
+    filters: Option<&AlbumFilters>,
 ) -> Result<Vec<Album>> {
     let albums = get_albums(state, false).await?;
 
     save_state(state)?;
 
-    let chosen = picker::pick(&albums, initial_selected)?;
+    let matching: Vec<&Album> = match filters {
+        Some(f) => albums.iter().filter(|a| check_filters(a, f)).collect(),
+        None => albums.iter().collect(),
+    };
+
+    let chosen = picker::pick(matching, initial_selected)?;
     if chosen.is_empty() {
         println!("No albums selected");
     }
     Ok(chosen)
 }
 
-pub async fn pick(queue: QueueBehaviours, debug: bool) -> Result<()> {
+pub async fn pick(queue: QueueBehaviours, debug: bool, filters: &AlbumFilters) -> Result<()> {
     let mut state: AppState = load_state();
 
-    let chosen = pick_albums(&mut state, None).await?;
+    let chosen = pick_albums(&mut state, None, Some(filters)).await?;
     if chosen.is_empty() {
         return Ok(());
     }

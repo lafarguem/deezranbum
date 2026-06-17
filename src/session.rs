@@ -65,7 +65,7 @@ fn remove(query: Option<String>) -> io::Result<()> {
     }
 
     let to_remove: Vec<Album> = match query {
-        None => picker::pick(&albums, None)?,
+        None => picker::pick(albums.iter().collect(), None)?,
         Some(q) => match album::best_match(&q, &albums) {
             Some(a) => vec![a.clone()],
             None => {

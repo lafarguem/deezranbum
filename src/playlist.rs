@@ -33,7 +33,7 @@ pub async fn edit(name: &str) -> Result<()> {
     let mut state: AppState = load_state();
 
     let existing = state.playlists.get(name).cloned().unwrap_or_default();
-    let chosen: HashSet<u64> = pick_albums(&mut state, Some(&existing))
+    let chosen: HashSet<u64> = pick_albums(&mut state, Some(&existing), None)
         .await?
         .into_iter()
         .map(|album| album.id)

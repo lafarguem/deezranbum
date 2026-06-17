@@ -226,30 +226,25 @@ async fn run() -> error::Result<()> {
             exclude_genre,
             artist,
             exclude_artist,
-        } => match query {
-            None => album::pick(queue, cli.debug).await?,
-            Some(q) => match q.parse::<usize>() {
-                Ok(n) => {
-                    album::next(
-                        n,
-                        queue,
-                        cli.debug,
-                        &AlbumFilters {
-                            after,
-                            before,
-                            min_duration,
-                            max_duration,
-                            genre,
-                            exclude_genre,
-                            artist,
-                            exclude_artist,
-                        },
-                    )
-                    .await?
-                }
-                Err(_) => album::search(&q, queue, cli.debug).await?,
-            },
-        },
+        } => {
+            let filters = &AlbumFilters {
+                after,
+                before,
+                min_duration,
+                max_duration,
+                genre,
+                exclude_genre,
+                artist,
+                exclude_artist,
+            };
+            match query {
+                None => album::pick(queue, cli.debug, filters).await?,
+                Some(q) => match q.parse::<usize>() {
+                    Ok(n) => album::next(n, queue, cli.debug, filters).await?,
+                    Err(_) => album::search(&q, queue, cli.debug).await?,
+                },
+            }
+        }
         Commands::Replay { from, to } => replay::replay(from, to),
         Commands::User { user_id } => user::set(user_id)?,
         Commands::Playlist { command } => playlist::handle(command, cli.debug).await?,
