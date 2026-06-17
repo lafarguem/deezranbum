@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     QueueBehaviours,
-    error::{AppError, Result},
+    error::{AppError, AppResult},
     picker, queue, session,
     storage::{Album, ApiAlbum, AppState, UserAlbum, load_state, save_state},
 };
@@ -53,7 +53,7 @@ pub fn add_album(state: &mut AppState, id: u64) {
     }
 }
 
-pub async fn get_albums(state: &mut AppState, force_fetch: bool) -> Result<Vec<Album>> {
+pub async fn get_albums(state: &mut AppState, force_fetch: bool) -> AppResult<Vec<Album>> {
     let client = reqwest::Client::new();
     let url = format!("{}/user/{}/albums?limit=1000", BASE_URL, state.user_id);
 
@@ -216,7 +216,7 @@ fn choose_albums<'a>(
     state: &mut AppState,
     amount: usize,
     filters: &AlbumFilters,
-) -> Result<Vec<&'a Album>> {
+) -> AppResult<Vec<&'a Album>> {
     // Everything in the library matching the filters, ignoring "seen" status.
     let matching: Vec<&Album> = albums
         .iter()
@@ -302,8 +302,8 @@ pub async fn next(
     queue: QueueBehaviours,
     debug: bool,
     filters: &AlbumFilters,
-) -> Result<()> {
-    let mut state: AppState = load_state();
+) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
     let albums = get_albums(&mut state, false).await?;
     let chosen = choose_albums(&albums, &mut state, amount, filters)?;
 
@@ -320,7 +320,7 @@ pub async fn pick_albums(
     state: &mut AppState,
     initial_selected: Option<&HashSet<u64>>,
     filters: Option<&AlbumFilters>,
-) -> Result<Vec<Album>> {
+) -> AppResult<Vec<Album>> {
     let albums = get_albums(state, false).await?;
 
     save_state(state)?;
@@ -337,8 +337,8 @@ pub async fn pick_albums(
     Ok(chosen)
 }
 
-pub async fn pick(queue: QueueBehaviours, debug: bool, filters: &AlbumFilters) -> Result<()> {
-    let mut state: AppState = load_state();
+pub async fn pick(queue: QueueBehaviours, debug: bool, filters: &AlbumFilters) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
 
     let chosen = pick_albums(&mut state, None, Some(filters)).await?;
     if chosen.is_empty() {
@@ -355,8 +355,8 @@ pub async fn pick(queue: QueueBehaviours, debug: bool, filters: &AlbumFilters) -
     Ok(())
 }
 
-pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> Result<()> {
-    let mut state: AppState = load_state();
+pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
     let albums = get_albums(&mut state, false).await?;
 
     let Some(album) = best_match(query, &albums) else {

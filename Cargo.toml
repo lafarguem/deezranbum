@@ -1,6 +1,6 @@
 [package]
 name = "deezranbum"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 description = "Fetches a random deezer album, without repeats between sessions"
 license = "MIT"
@@ -22,6 +22,7 @@ ratatui = "0.30.0"
 crossterm = "0.29.0"
 futures = "0.3"
 chrono = { version = "0.4.45", features = ["serde"] }
+clap_complete = { version = "4.6.5", features = ["unstable-dynamic"] }
 
 # The profile that 'dist' will build with
 [profile.dist]

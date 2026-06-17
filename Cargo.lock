@@ -231,6 +231,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0a7a9bfdb35811f9e59832f0f05975114d2251b415fb534108e6f34060fd772"
+dependencies = [
+ "clap",
+ "clap_lex",
+ "is_executable",
+ "shlex",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -395,10 +407,11 @@ dependencies = [
 
 [[package]]
 name = "deezranbum"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "chrono",
  "clap",
+ "clap_complete",
  "crossterm",
  "directories-next",
  "futures",
@@ -1060,6 +1073,15 @@ name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
+
+[[package]]
+name = "is_executable"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82cb6a9f675da968c63b6208c641b9dca58fc0133ae53375736b1767b0cab8bd"
+dependencies = [
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "is_terminal_polyfill"

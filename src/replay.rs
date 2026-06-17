@@ -1,12 +1,13 @@
 use crate::{
     QueueBehaviours,
     album::handle_queue,
+    error::AppResult,
     storage::{Album, load_state},
 };
 use std::cmp;
 
-pub fn replay(from: Option<usize>, to: Option<usize>) {
-    let state = load_state();
+pub fn replay(from: Option<usize>, to: Option<usize>) -> AppResult<()> {
+    let state = load_state()?;
 
     let from = cmp::min(from.unwrap_or(0usize), state.album_order.len());
 
@@ -29,4 +30,5 @@ pub fn replay(from: Option<usize>, to: Option<usize>) {
             )
         }
     }
+    Ok(())
 }

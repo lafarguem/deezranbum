@@ -46,4 +46,4 @@ impl From<std::io::Error> for AppError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, AppError>;
+pub type AppResult<T> = std::result::Result<T, AppError>;

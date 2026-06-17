@@ -1,4 +1,5 @@
 mod album;
+mod completion;
 mod error;
 mod picker;
 mod playlist;
@@ -9,9 +10,10 @@ mod storage;
 mod user;
 
 use chrono::NaiveDate;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::ArgValueCandidates;
 
-use crate::album::AlbumFilters;
+use crate::{album::AlbumFilters, error::AppResult};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -95,6 +97,7 @@ enum Commands {
     /// Pick album(s). No arg → interactive picker; number → that many random; string → best fuzzy match.
     Album {
         /// Number of albums (e.g. `3`) or a fuzzy search query (e.g. `michael jackson`). Omit for interactive picker.
+        #[arg(add = ArgValueCandidates::new(completion::album_titles))]
         query: Option<String>,
 
         /// Skip adding album to Deezer queue
@@ -113,16 +116,16 @@ enum Commands {
         #[arg(long, value_parser = parse_duration)]
         max_duration: Option<u64>,
 
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(completion::genres))]
         genre: Vec<String>,
 
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(completion::genres))]
         exclude_genre: Vec<String>,
 
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(completion::artists))]
         artist: Vec<String>,
 
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(completion::artists))]
         exclude_artist: Vec<String>,
     },
 
@@ -210,11 +213,12 @@ async fn main() {
     }
 }
 
-async fn run() -> error::Result<()> {
+async fn run() -> AppResult<()> {
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Session { command } => session::handle(command),
+        Commands::Session { command } => session::handle(command)?,
         Commands::Album {
             query,
             queue,
@@ -238,19 +242,19 @@ async fn run() -> error::Result<()> {
                 exclude_artist,
             };
             match query {
-                None => album::pick(queue, cli.debug, filters).await?,
+                None => album::pick(queue, cli.debug, filters).await,
                 Some(q) => match q.parse::<usize>() {
-                    Ok(n) => album::next(n, queue, cli.debug, filters).await?,
-                    Err(_) => album::search(&q, queue, cli.debug).await?,
+                    Ok(n) => album::next(n, queue, cli.debug, filters).await,
+                    Err(_) => album::search(&q, queue, cli.debug).await,
                 },
-            }
+            }?
         }
-        Commands::Replay { from, to } => replay::replay(from, to),
+        Commands::Replay { from, to } => replay::replay(from, to)?,
         Commands::User { user_id } => user::set(user_id)?,
         Commands::Playlist { command } => playlist::handle(command, cli.debug).await?,
         Commands::Reset => storage::reset(),
         Commands::Fetch => {
-            let mut state = storage::load_state();
+            let mut state = storage::load_state()?;
             album::get_albums(&mut state, true).await?;
             storage::save_state(&state)?;
             println!("Library refreshed.");

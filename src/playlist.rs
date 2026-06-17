@@ -5,20 +5,17 @@ use rand::{seq::SliceRandom, thread_rng};
 use crate::{
     PlaylistSubcommands, QueueBehaviours,
     album::{add_album, handle_queue, pick_albums},
-    error::Result,
+    error::AppResult,
     session::remove_album,
     storage::{Album, AppState, load_state, save_state},
 };
 
-pub async fn handle(command: PlaylistSubcommands, debug: bool) -> Result<()> {
+pub async fn handle(command: PlaylistSubcommands, debug: bool) -> AppResult<()> {
     match command {
         PlaylistSubcommands::Edit { name } => edit(&name).await,
         PlaylistSubcommands::List { name } => match name {
             Some(name) => list_playlist(&name),
-            None => {
-                list();
-                Ok(())
-            }
+            None => list(),
         },
         PlaylistSubcommands::Delete { name } => delete(&name),
         PlaylistSubcommands::Play {
@@ -29,8 +26,8 @@ pub async fn handle(command: PlaylistSubcommands, debug: bool) -> Result<()> {
     }
 }
 
-pub async fn edit(name: &str) -> Result<()> {
-    let mut state: AppState = load_state();
+pub async fn edit(name: &str) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
 
     let existing = state.playlists.get(name).cloned().unwrap_or_default();
     let chosen: HashSet<u64> = pick_albums(&mut state, Some(&existing), None)
@@ -53,8 +50,8 @@ pub async fn play(
     number: Option<usize>,
     queue: QueueBehaviours,
     debug: bool,
-) -> Result<()> {
-    let mut state: AppState = load_state();
+) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
     let playlist = match state.playlists.get(name) {
         Some(playlist) => playlist.clone(),
         None => {
@@ -105,8 +102,8 @@ pub async fn play(
     Ok(())
 }
 
-pub fn delete(name: &str) -> Result<()> {
-    let mut state: AppState = load_state();
+pub fn delete(name: &str) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
 
     let removed = state.playlists.remove(name);
     match removed {
@@ -118,16 +115,17 @@ pub fn delete(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn list() {
-    let state: AppState = load_state();
+pub fn list() -> AppResult<()> {
+    let state: AppState = load_state()?;
 
     for (name, playlist) in state.playlists.iter() {
         println!("{} - {} albums", name, playlist.len());
     }
+    Ok(())
 }
 
-pub fn list_playlist(name: &str) -> Result<()> {
-    let state: AppState = load_state();
+pub fn list_playlist(name: &str) -> AppResult<()> {
+    let state: AppState = load_state()?;
 
     let playlist = match state.playlists.get(name) {
         Some(playlist) => playlist,

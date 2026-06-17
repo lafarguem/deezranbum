@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::{collections::HashMap, path::PathBuf};
 
+use crate::error::{AppError, AppResult};
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Artist {
     pub name: String,
@@ -189,19 +191,19 @@ fn data_file() -> PathBuf {
     dir.join("album.json")
 }
 
-pub fn load_state() -> AppState {
+pub fn load_state() -> AppResult<AppState> {
     let path = data_file();
 
     match File::open(path) {
-        Ok(file) => serde_json::from_reader(file).unwrap(),
+        Ok(file) => Ok(serde_json::from_reader(file).unwrap()),
 
-        Err(e) if e.kind() == ErrorKind::NotFound => AppState::default(),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(AppState::default()),
 
-        Err(e) => panic!("{}", e),
+        Err(e) => Err(AppError::Io(e)),
     }
 }
 
-pub fn save_state(state: &AppState) -> std::io::Result<()> {
+pub fn save_state(state: &AppState) -> AppResult<()> {
     let path = data_file();
     let file = File::create(path)?;
 

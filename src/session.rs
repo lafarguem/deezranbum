@@ -1,11 +1,11 @@
-use std::io;
-
 use crate::{
-    SessionCommands, album, picker,
+    SessionCommands, album,
+    error::AppResult,
+    picker,
     storage::{Album, AppState, load_state, save_state},
 };
 
-pub fn handle(command: SessionCommands) {
+pub fn handle(command: SessionCommands) -> AppResult<()> {
     match command {
         SessionCommands::Clear => clear(),
         SessionCommands::History => history(),
@@ -13,6 +13,7 @@ pub fn handle(command: SessionCommands) {
             if let Err(e) = remove(album_name) {
                 println!("Error: {}", e);
             }
+            Ok(())
         }
     }
 }
@@ -22,17 +23,17 @@ pub fn clear_state(state: &mut AppState) {
     state.album_order.clear();
 }
 
-pub fn clear() {
-    let mut state = load_state();
+pub fn clear() -> AppResult<()> {
+    let mut state = load_state()?;
     clear_state(&mut state);
     match save_state(&state) {
-        Ok(()) => (),
-        _ => println!("Error clearing application"),
+        Ok(()) => Ok(()),
+        _ => Ok(println!("Error clearing application")),
     }
 }
 
-fn history() {
-    let state = load_state();
+fn history() -> AppResult<()> {
+    let state = load_state()?;
     for (index, id) in state.album_order.iter().enumerate() {
         let album = match state.albums.get(id) {
             Some(album) => album,
@@ -40,6 +41,7 @@ fn history() {
         };
         println!("{} : {}", index, album)
     }
+    Ok(())
 }
 
 pub fn remove_album(state: &mut AppState, id: &u64) {
@@ -55,8 +57,8 @@ fn session_albums(state: &AppState) -> Vec<Album> {
         .collect()
 }
 
-fn remove(query: Option<String>) -> io::Result<()> {
-    let mut state = load_state();
+fn remove(query: Option<String>) -> AppResult<()> {
+    let mut state = load_state()?;
     let albums = session_albums(&state);
 
     if albums.is_empty() {
