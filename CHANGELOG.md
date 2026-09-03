@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-03
+
+### Fixed
+
+- The picker no longer loses its scroll position between keypresses: the selection is no longer 
+  pinned to the bottom row, moving up no longer jumps back to the top, and scrolling now starts 
+  a couple of rows before the edge of the list.
+- stats now lists album titles under Top Albums, counted by total plays. It previously showed 
+  artist names counted by distinct albums.
+
 ## [0.2.0] - 2026-09-03
 
 Deezer playlists can now be treated as albums, and the old `playlist` command has been renamed
@@ -38,8 +48,7 @@ to `collection` to make room for them.
   `--genre` never matches one; `--max-duration` is the way to keep very long playlists out of a pick.
 - `fetch` now refreshes registered playlist metadata alongside album metadata.
 - The picker shows a track count beside playlists, to tell them apart from albums at a glance.
-- `deezranbum stats` — top albums by play count, plus top artists and top genres by total
-  listening time.
+- `deezranbum stats` — listening totals by artist and genre, plus a play-count leaderboard.
 
 ### Fixed
 
@@ -61,5 +70,6 @@ see your collections.
 Releases before 0.2.0 predate this changelog; see the
 [GitHub releases](https://github.com/lafarguem/deezranbum/releases) for those.
 
-[Unreleased]: https://github.com/lafarguem/deezranbum/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/lafarguem/deezranbum/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/lafarguem/deezranbum/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/lafarguem/deezranbum/compare/v0.1.8...v0.2.0
