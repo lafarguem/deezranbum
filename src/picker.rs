@@ -87,6 +87,8 @@ pub fn pick(
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
+    let mut list_state = ListState::default();
+
     let chosen_ids: Vec<u64> = loop {
         if dirty {
             results = score_all(&query, &haystacks, &mut matcher, &mut buf);
@@ -98,7 +100,6 @@ pub fn pick(
             dirty = false;
         }
 
-        let mut list_state = ListState::default();
         if !results.is_empty() {
             list_state.select(Some(cursor));
         }
@@ -148,6 +149,7 @@ pub fn pick(
                 .collect();
 
             let list = List::new(items)
+                .scroll_padding(2)
                 .highlight_style(
                     Style::default()
                         .bg(Color::DarkGray)
