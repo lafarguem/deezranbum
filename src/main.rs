@@ -1,4 +1,5 @@
 mod album;
+mod collection;
 mod completion;
 mod error;
 mod picker;
@@ -14,7 +15,7 @@ use chrono::NaiveDate;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::ArgValueCandidates;
 
-use crate::{album::AlbumFilters, error::AppResult};
+use crate::{album::AlbumFilters, error::AppResult, storage::ItemKind};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -105,6 +106,10 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = QueueBehaviours::True)]
         queue: QueueBehaviours,
 
+        /// Restrict to albums or to Deezer playlists. Omit for both.
+        #[arg(long, value_enum)]
+        kind: Option<ItemKind>,
+
         #[arg(long, value_parser = parse_partial_date)]
         before: Option<NaiveDate>,
 
@@ -144,7 +149,13 @@ enum Commands {
         user_id: String, // positional argument
     },
 
-    // Manage and play playlists
+    /// Manage and play local album collections
+    Collection {
+        #[command(subcommand)]
+        command: CollectionSubcommands,
+    },
+
+    /// Manage Deezer playlists treated as albums
     Playlist {
         #[command(subcommand)]
         command: PlaylistSubcommands,
@@ -176,37 +187,59 @@ enum SessionCommands {
 }
 
 #[derive(Subcommand)]
-enum PlaylistSubcommands {
-    /// Edit or create a playlist
+enum CollectionSubcommands {
+    /// Edit or create a collection
     Edit {
-        /// Name of the playlist
+        /// Name of the collection
         name: String,
     },
 
-    /// List all playlists or albums in playlist
+    /// List all collections or albums in collection
     List {
-        /// Name of the playlist, Omit to list all playlists
+        /// Name of the collection, Omit to list all collections
         name: Option<String>,
     },
 
-    /// Delete a playlist
+    /// Delete a collection
     Delete {
-        /// Name of the playlist to delete
+        /// Name of the collection to delete
         name: String,
     },
 
-    /// Play a playlist
+    /// Play a collection
     Play {
-        /// Name of the playlist to play
+        /// Name of the collection to play
         name: String,
 
-        /// Number of albums to play from the playlist. Omit for all albums
+        /// Number of albums to play from the collection. Omit for all albums
         number: Option<usize>,
 
         /// Skip adding album to Deezer queue
         #[arg(long, value_enum, default_value_t = QueueBehaviours::True)]
         queue: QueueBehaviours,
     },
+}
+
+#[derive(Subcommand)]
+enum PlaylistSubcommands {
+    /// Add a Deezer playlist to the album pool by URL or id
+    Add {
+        /// Playlist URL or id
+        playlist: String,
+    },
+
+    /// Remove Deezer playlist(s) from the album pool. No arg → interactive picker; string → fuzzy best match.
+    Remove {
+        /// Fuzzy search query. Omit for the interactive picker.
+        #[arg(add = ArgValueCandidates::new(completion::playlist_titles))]
+        playlist: Option<String>,
+    },
+
+    /// Pick playlists to add from your Deezer library
+    Import,
+
+    /// List the Deezer playlists in the album pool
+    List,
 }
 
 #[tokio::main]
@@ -226,6 +259,7 @@ async fn run() -> AppResult<()> {
         Commands::Album {
             query,
             queue,
+            kind,
             after,
             before,
             min_duration,
@@ -236,6 +270,7 @@ async fn run() -> AppResult<()> {
             exclude_artist,
         } => {
             let filters = &AlbumFilters {
+                kind,
                 after,
                 before,
                 min_duration,
@@ -255,7 +290,8 @@ async fn run() -> AppResult<()> {
         }
         Commands::Replay { from, to } => replay::replay(from, to)?,
         Commands::User { user_id } => user::set(user_id)?,
-        Commands::Playlist { command } => playlist::handle(command, cli.debug).await?,
+        Commands::Collection { command } => collection::handle(command, cli.debug).await?,
+        Commands::Playlist { command } => playlist::handle(command).await?,
         Commands::Reset => storage::reset(),
         Commands::Fetch => {
             let mut state = storage::load_state()?;

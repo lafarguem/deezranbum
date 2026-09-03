@@ -53,13 +53,57 @@ deezranbum user USER_ID
 | Command | Description |
 |---|---|
 | `deezranbum album` | Add a random unseen album to your Deezer queue |
+| `deezranbum album N` | Add N random unseen albums |
+| `deezranbum album QUERY` | Add the best fuzzy match for QUERY |
 | `deezranbum user USER_ID` | Set your Deezer user ID |
 | `deezranbum session history` | Show all albums seen so far, in order |
 | `deezranbum session remove TITLE` | Remove an album from the seen list |
 | `deezranbum session clear` | Clear the current session (all albums become unseen again) |
+| `deezranbum replay FROM TO` | Re-queue a range of the session |
+| `deezranbum collection edit NAME` | Create or edit a local collection of albums |
+| `deezranbum collection list [NAME]` | List collections, or the albums in one |
+| `deezranbum collection play NAME [N]` | Queue albums from a collection |
+| `deezranbum collection delete NAME` | Delete a collection |
+| `deezranbum playlist add URL` | Treat a Deezer playlist as an album |
+| `deezranbum playlist import` | Pick playlists to add from your Deezer library |
+| `deezranbum playlist list` | List the Deezer playlists in the pool |
+| `deezranbum playlist remove [TITLE]` | Remove a Deezer playlist from the pool |
+| `deezranbum fetch` | Refresh all album and playlist metadata |
+| `deezranbum stats` | Show listening stats |
 | `deezranbum reset` | Delete all persisted state (user ID and session) |
 
 Once every album in your library has been seen, the session is automatically cleared and the cycle starts over.
+
+`deezranbum album` accepts `--kind album|playlist`, `--before`/`--after` (partial dates like
+`2019` or `2019-05` work), `--min-duration`/`--max-duration` (e.g. `1h30m`), and repeatable
+`--genre`/`--artist` plus their `--exclude-` counterparts. Pass `--queue false` to print a pick
+without touching your Deezer queue, or `--queue ask` to be prompted.
+
+## Playlists as albums
+
+Any public Deezer playlist can be added to the pool and is then treated exactly like an album —
+picked at random, tracked as seen, replayed, and addable to a collection:
+
+```bash
+deezranbum playlist add https://www.deezer.com/playlist/1313621735
+deezranbum playlist import        # pick from your own playlists
+deezranbum album --kind playlist  # pick a playlist specifically
+```
+
+A playlist's creator stands in for the artist and its creation date for the release date, so
+`--artist` and `--before`/`--after` work on them. Playlists carry no genre, so `--genre` never
+matches one. Since a playlist's duration is the sum of its tracks, `--max-duration 1h30m` is the
+way to keep very long playlists out of a pick.
+
+## Collections
+
+A collection is a local, named group of albums and playlists — it lives only in `deezranbum`
+and is never written back to Deezer:
+
+```bash
+deezranbum collection edit chill   # interactive picker
+deezranbum collection play chill 2
+```
 
 ## Releasing (Homebrew deployment)
 

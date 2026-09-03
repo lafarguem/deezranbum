@@ -1,146 +1,205 @@
 use std::collections::HashSet;
 
-use rand::{seq::SliceRandom, thread_rng};
-
 use crate::{
-    PlaylistSubcommands, QueueBehaviours,
-    album::{add_album, handle_queue, pick_albums},
+    PlaylistSubcommands,
+    album::{best_match, fetch_playlist, fetch_user_playlists},
     error::AppResult,
-    session::remove_album,
-    storage::{Album, AppState, load_state, save_state},
+    picker,
+    storage::{Album, AppState, load_state, playlist_key, save_state},
 };
 
-pub async fn handle(command: PlaylistSubcommands, debug: bool) -> AppResult<()> {
+pub async fn handle(command: PlaylistSubcommands) -> AppResult<()> {
     match command {
-        PlaylistSubcommands::Edit { name } => edit(&name).await,
-        PlaylistSubcommands::List { name } => match name {
-            Some(name) => list_playlist(&name),
-            None => list(),
-        },
-        PlaylistSubcommands::Delete { name } => delete(&name),
-        PlaylistSubcommands::Play {
-            name,
-            number,
-            queue,
-        } => play(&name, number, queue, debug).await,
+        PlaylistSubcommands::Add { playlist } => add(&playlist).await,
+        PlaylistSubcommands::Remove { playlist } => remove(playlist),
+        PlaylistSubcommands::Import => import().await,
+        PlaylistSubcommands::List => list(),
     }
 }
 
-pub async fn edit(name: &str) -> AppResult<()> {
+fn parse_id(input: &str) -> Option<u64> {
+    let input = input.trim();
+    if let Ok(id) = input.parse::<u64>() {
+        return Some(id);
+    }
+    let tail = input.split("playlist/").nth(1)?;
+    let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+fn describe(playlist: &Album) -> String {
+    match playlist.nb_tracks {
+        Some(n) => format!("{} - {} tracks", playlist, n),
+        None => format!("{}", playlist),
+    }
+}
+
+fn registered(state: &AppState) -> Vec<Album> {
+    state
+        .playlist_ids
+        .iter()
+        .map(|id| {
+            let key = playlist_key(*id);
+            state
+                .albums
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| Album::with_id(key))
+        })
+        .collect()
+}
+
+async fn add(input: &str) -> AppResult<()> {
+    let Some(id) = parse_id(input) else {
+        println!("Could not read a playlist id from '{}'", input);
+        return Ok(());
+    };
+
     let mut state: AppState = load_state()?;
+    let client = reqwest::Client::new();
 
-    let existing = state.playlists.get(name).cloned().unwrap_or_default();
-    let chosen: HashSet<u64> = pick_albums(&mut state, Some(&existing), None)
-        .await?
-        .into_iter()
-        .map(|album| album.id)
-        .collect();
+    let playlist = match fetch_playlist(id, &client).await {
+        Ok(playlist) => playlist,
+        Err(e) => {
+            println!("Could not add playlist {}: {}", id, e);
+            return Ok(());
+        }
+    };
 
-    if chosen.is_empty() {
+    if state.playlist_ids.contains(&id) {
+        println!("Already added: {}", describe(&playlist));
+    } else {
+        state.playlist_ids.push(id);
+        println!("Added: {}", describe(&playlist));
+    }
+
+    state.albums.insert(playlist.id, playlist);
+    save_state(&state)?;
+    Ok(())
+}
+
+fn remove(query: Option<String>) -> AppResult<()> {
+    let mut state: AppState = load_state()?;
+    let playlists = registered(&state);
+
+    if playlists.is_empty() {
+        println!("No playlists added");
         return Ok(());
     }
 
-    state.playlists.insert(name.to_string(), chosen);
-    save_state(&state)?;
-    Ok(())
-}
-
-pub async fn play(
-    name: &str,
-    number: Option<usize>,
-    queue: QueueBehaviours,
-    debug: bool,
-) -> AppResult<()> {
-    let mut state: AppState = load_state()?;
-    let playlist = match state.playlists.get(name) {
-        Some(playlist) => playlist.clone(),
-        None => {
-            println!("No playlist named {}", name);
-            return Ok(());
-        }
-    };
-
-    let mut album_ids: Vec<u64> = playlist
-        .iter()
-        .filter(|id| !state.album_ids.contains(id))
-        .copied()
-        .collect();
-    if album_ids.is_empty() {
-        album_ids = playlist.iter().copied().collect();
-        for id in &album_ids {
-            remove_album(&mut state, id);
-        }
-    }
-
-    let mut rng = thread_rng();
-    album_ids.shuffle(&mut rng);
-
-    if let Some(n) = number {
-        album_ids.truncate(n)
-    }
-
-    match album_ids.len() {
-        0 => {
-            save_state(&state)?;
-            println!("No album found");
-            return Ok(());
-        }
-        _ => {
-            for id in album_ids {
-                let album = match state.albums.get(&id) {
-                    Some(album) => album,
-                    None => &Album::with_id(id),
-                };
-                println!("{}", album);
-                handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
-                add_album(&mut state, id);
+    let to_remove: Vec<Album> = match query {
+        None => picker::pick(playlists.iter().collect(), None)?,
+        Some(q) => match best_match(&q, &playlists) {
+            Some(playlist) => vec![playlist.clone()],
+            None => {
+                println!("No playlist matched '{}'", q);
+                return Ok(());
             }
-            save_state(&state)?;
-        }
+        },
+    };
+
+    if to_remove.is_empty() {
+        println!("No playlists selected");
+        return Ok(());
     }
 
-    Ok(())
-}
-
-pub fn delete(name: &str) -> AppResult<()> {
-    let mut state: AppState = load_state()?;
-
-    let removed = state.playlists.remove(name);
-    match removed {
-        Some(_) => println!("Playlist {} successfully removed!", name),
-        None => println!("No playlist named {}", name),
+    for playlist in &to_remove {
+        let id = playlist.queue_id();
+        state.playlist_ids.retain(|registered| *registered != id);
+        println!("Removed: {}", playlist);
     }
 
     save_state(&state)?;
     Ok(())
 }
 
-pub fn list() -> AppResult<()> {
-    let state: AppState = load_state()?;
+async fn import() -> AppResult<()> {
+    let mut state: AppState = load_state()?;
 
-    for (name, playlist) in state.playlists.iter() {
-        println!("{} - {} albums", name, playlist.len());
+    if state.user_id.is_empty() {
+        println!("No user id set. Run `deezranbum user <user_id>` first.");
+        return Ok(());
     }
-    Ok(())
-}
 
-pub fn list_playlist(name: &str) -> AppResult<()> {
-    let state: AppState = load_state()?;
-
-    let playlist = match state.playlists.get(name) {
-        Some(playlist) => playlist,
-        None => {
-            println!("No playlist named {}", name);
+    let client = reqwest::Client::new();
+    let fetched = match fetch_user_playlists(&state.user_id, &client).await {
+        Ok(fetched) => fetched,
+        Err(e) => {
+            println!("Could not fetch playlists: {}", e);
             return Ok(());
         }
     };
 
-    for id in playlist.iter() {
-        let album = match state.albums.get(id) {
-            Some(album) => album,
-            None => &Album::with_id(*id),
-        };
-        println!("{}", album)
+    let candidates: Vec<Album> = fetched
+        .into_iter()
+        .filter(|playlist| !playlist.is_loved_track)
+        .map(Album::from_playlist)
+        .collect();
+
+    if candidates.is_empty() {
+        println!("No playlists found for user {}", state.user_id);
+        return Ok(());
+    }
+
+    let already: HashSet<u64> = state
+        .playlist_ids
+        .iter()
+        .map(|id| playlist_key(*id))
+        .collect();
+    let chosen = picker::pick(candidates.iter().collect(), Some(&already))?;
+
+    if chosen.is_empty() {
+        println!("No playlists selected");
+        return Ok(());
+    }
+
+    let keep: HashSet<u64> = chosen.iter().map(|playlist| playlist.queue_id()).collect();
+    let dropped: Vec<Album> = candidates
+        .iter()
+        .filter(|playlist| {
+            let id = playlist.queue_id();
+            state.playlist_ids.contains(&id) && !keep.contains(&id)
+        })
+        .cloned()
+        .collect();
+
+    let dropped_ids: HashSet<u64> = dropped.iter().map(|playlist| playlist.queue_id()).collect();
+    state.playlist_ids.retain(|id| !dropped_ids.contains(id));
+
+    for playlist in &dropped {
+        println!("Removed: {}", playlist);
+    }
+
+    let mut added = 0;
+    for playlist in chosen {
+        let id = playlist.queue_id();
+        if !state.playlist_ids.contains(&id) {
+            state.playlist_ids.push(id);
+            added += 1;
+            println!("Added: {}", describe(&playlist));
+        }
+        state.albums.insert(playlist.id, playlist);
+    }
+
+    if added == 0 && dropped.is_empty() {
+        println!("No changes");
+    }
+
+    save_state(&state)?;
+    Ok(())
+}
+
+fn list() -> AppResult<()> {
+    let state: AppState = load_state()?;
+    let playlists = registered(&state);
+
+    if playlists.is_empty() {
+        println!("No playlists added");
+        return Ok(());
+    }
+
+    for playlist in &playlists {
+        println!("{}", describe(playlist));
     }
     Ok(())
 }

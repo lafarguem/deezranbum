@@ -1,4 +1,4 @@
-use crate::storage::load_state;
+use crate::storage::{load_state, playlist_key};
 use clap_complete::CompletionCandidate;
 
 pub fn genres() -> Vec<CompletionCandidate> {
@@ -46,4 +46,21 @@ pub fn album_titles() -> Vec<CompletionCandidate> {
         .into_iter()
         .map(CompletionCandidate::new)
         .collect()
+}
+
+pub fn playlist_titles() -> Vec<CompletionCandidate> {
+    let Ok(state) = load_state() else {
+        return Vec::new();
+    };
+
+    let mut titles: Vec<String> = state
+        .playlist_ids
+        .iter()
+        .filter_map(|id| state.albums.get(&playlist_key(*id)))
+        .map(|playlist| playlist.title.clone())
+        .collect();
+
+    titles.sort();
+    titles.dedup();
+    titles.into_iter().map(CompletionCandidate::new).collect()
 }

@@ -1,4 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime};
+use clap::ValueEnum;
 use directories_next::ProjectDirs;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashSet;
@@ -36,10 +37,48 @@ where
         .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()))
 }
 
+fn deserialize_lenient_datetime<'de, D>(deserializer: D) -> Result<Option<NaiveDate>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.as_deref().and_then(|s| {
+        let date = s.split_whitespace().next().unwrap_or(s);
+        NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()
+    }))
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Genre {
     pub id: u64,
     pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+#[value(rename_all = "lower")]
+pub enum ItemKind {
+    #[default]
+    Album,
+    Playlist,
+}
+
+pub const PLAYLIST_KEY_BASE: u64 = 1 << 63;
+
+pub fn playlist_key(playlist_id: u64) -> u64 {
+    PLAYLIST_KEY_BASE | playlist_id
+}
+
+pub fn kind_of_key(key: u64) -> ItemKind {
+    if key & PLAYLIST_KEY_BASE != 0 {
+        ItemKind::Playlist
+    } else {
+        ItemKind::Album
+    }
+}
+
+pub fn real_id_of_key(key: u64) -> u64 {
+    key & !PLAYLIST_KEY_BASE
 }
 
 /// Deezer nests list sub-resources (genres, tracks, …) under a `{ "data": [..] }`
@@ -77,6 +116,25 @@ pub struct ApiAlbum {
     pub duration: u64,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct ApiPlaylist {
+    pub id: u64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub link: String,
+    #[serde(default)]
+    pub creator: Artist,
+    #[serde(default)]
+    pub duration: u64,
+    #[serde(default)]
+    pub nb_tracks: u64,
+    #[serde(default, deserialize_with = "deserialize_lenient_datetime")]
+    pub creation_date: Option<NaiveDate>,
+    #[serde(default)]
+    pub is_loved_track: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UserAlbum {
     pub id: u64,
@@ -91,6 +149,8 @@ pub struct UserAlbum {
 pub struct Album {
     pub id: u64,
     pub real_id: Option<u64>,
+    #[serde(default)]
+    pub kind: ItemKind,
     pub title: String,
     pub link: String,
     pub artist: Artist,
@@ -100,6 +160,8 @@ pub struct Album {
     pub release_date: Option<NaiveDate>,
     #[serde(default)]
     pub duration: u64,
+    #[serde(default)]
+    pub nb_tracks: Option<u64>,
 }
 
 impl Default for Album {
@@ -107,22 +169,31 @@ impl Default for Album {
         Album {
             id: 0,
             real_id: None,
+            kind: ItemKind::Album,
             title: "Unknown".to_string(),
             link: String::new(),
             artist: Artist::default(),
             genres: Vec::new(),
             release_date: None,
             duration: 0,
+            nb_tracks: None,
         }
     }
 }
 
 impl Album {
     pub fn with_id(id: u64) -> Self {
+        let kind = kind_of_key(id);
+        let real_id = real_id_of_key(id);
+        let link = match kind {
+            ItemKind::Album => format!("https://deezer.com/album/{}", real_id),
+            ItemKind::Playlist => format!("https://deezer.com/playlist/{}", real_id),
+        };
         Album {
             id,
-            real_id: Some(id),
-            link: format!("https://deezer.com/album/{}", id),
+            real_id: Some(real_id),
+            kind,
+            link,
             ..Default::default()
         }
     }
@@ -131,7 +202,14 @@ impl Album {
     /// Fallback albums built from `with_user_album`/`with_id` lack this, so a
     /// cached copy of one should be re-fetched rather than reused.
     pub fn has_metadata(&self) -> bool {
-        self.duration > 0 || !self.genres.is_empty()
+        match self.kind {
+            ItemKind::Album => self.duration > 0 || !self.genres.is_empty(),
+            ItemKind::Playlist => self.nb_tracks.is_some(),
+        }
+    }
+
+    pub fn queue_id(&self) -> u64 {
+        self.real_id.unwrap_or_else(|| real_id_of_key(self.id))
     }
 
     /// Build a stored album from a Deezer `/album/{id}` response. Keeps the
@@ -142,12 +220,33 @@ impl Album {
         Album {
             id: library_id,
             real_id: Some(api.id),
+            kind: ItemKind::Album,
             title: api.title,
             link: api.link,
             artist: api.artist,
             genres: api.genres,
             release_date: api.release_date,
             duration: api.duration,
+            nb_tracks: None,
+        }
+    }
+
+    pub fn from_playlist(api: ApiPlaylist) -> Self {
+        Album {
+            id: playlist_key(api.id),
+            real_id: Some(api.id),
+            kind: ItemKind::Playlist,
+            title: api.title,
+            link: if api.link.is_empty() {
+                format!("https://www.deezer.com/playlist/{}", api.id)
+            } else {
+                api.link
+            },
+            artist: api.creator,
+            genres: Vec::new(),
+            release_date: api.creation_date,
+            duration: api.duration,
+            nb_tracks: Some(api.nb_tracks),
         }
     }
 
@@ -178,7 +277,9 @@ pub struct AppState {
     pub album_ids: HashSet<u64>,
     pub album_order: Vec<u64>,
     pub albums: HashMap<u64, Album>,
-    pub playlists: HashMap<String, HashSet<u64>>,
+    #[serde(alias = "playlists")]
+    pub collections: HashMap<String, HashSet<u64>>,
+    pub playlist_ids: Vec<u64>,
     pub history: HashMap<u64, Vec<NaiveDateTime>>,
 }
 

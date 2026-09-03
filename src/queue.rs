@@ -3,6 +3,8 @@ use std::fs;
 use std::process::Command;
 use tempfile::NamedTempFile;
 
+use crate::storage::{Album, ItemKind};
+
 #[derive(Debug)]
 pub enum QueueError {
     NoDeezerTab,
@@ -22,7 +24,7 @@ impl fmt::Display for QueueError {
 
 impl std::error::Error for QueueError {}
 
-fn build_js(album_id: &u64) -> String {
+fn build_js(album: &Album) -> String {
     // tab.execute() in JXA runs in an isolated world — page JS globals like
     // window.dzPlayer are invisible there. To reach the main world we inject a
     // <script src=blob:...> via queue_inject.js; the blob URL bypasses CSP and
@@ -30,8 +32,30 @@ fn build_js(album_id: &u64) -> String {
     //
     // Layer order: queue_outer.js (JXA) → execute(queue_inject.js) → blob <script>(queue_main_world.js)
 
-    let main_world_js =
-        include_str!("js/queue_main_world.js").replace("__ALBUM_ID__", &album_id.to_string());
+    let id = album.queue_id();
+    let (method, body, object_type) = match album.kind {
+        ItemKind::Album => (
+            "deezer.pageAlbum",
+            format!("{{alb_id: {id}, lang: 'us', tab: 0, header: true}}"),
+            "album",
+        ),
+        ItemKind::Playlist => {
+            let nb = album.nb_tracks.unwrap_or(2000).clamp(100, 10000);
+            (
+                "deezer.pagePlaylist",
+                format!(
+                    "{{playlist_id: '{id}', lang: 'us', nb: {nb}, start: 0, tab: 0, tags: true, header: true}}"
+                ),
+                "playlist",
+            )
+        }
+    };
+
+    let main_world_js = include_str!("js/queue_main_world.js")
+        .replace("__GW_METHOD__", method)
+        .replace("__GW_BODY__", &body)
+        .replace("__OBJECT_TYPE__", object_type)
+        .replace("__OBJECT_ID__", &id.to_string());
 
     let main_world_js_json =
         serde_json::to_string(&main_world_js).expect("failed to JSON-encode main world JS");
@@ -45,8 +69,8 @@ fn build_js(album_id: &u64) -> String {
     include_str!("js/queue_outer.js").replace("__MAIN_WORLD_JS_JSON__", &inject_js_json)
 }
 
-pub fn add_to_queue(album_id: &u64, debug: bool) -> Result<(), QueueError> {
-    let js = build_js(album_id);
+pub fn add_to_queue(album: &Album, debug: bool) -> Result<(), QueueError> {
+    let js = build_js(album);
 
     let file = NamedTempFile::new().map_err(QueueError::SpawnFailed)?;
 

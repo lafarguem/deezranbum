@@ -38,7 +38,7 @@ try {
     }
 
     async function main() {
-        log('main() start, album_id=__ALBUM_ID__');
+        log('main() start, __OBJECT_TYPE__ id=__OBJECT_ID__');
         for (var attempt = 0; attempt < 40; attempt++) {
             log('attempt ' + attempt);
             var dzp = findPlayer();
@@ -65,24 +65,24 @@ try {
                     var token = ud.results && ud.results.checkForm;
                     var userId = ud.results && ud.results.USER && ud.results.USER.USER_ID;
                     log('token present: ' + !!token + ', userId: ' + userId);
-                    log('fetching album tracks...');
+                    log('fetching tracks...');
                     var ar = await fetch(
-                        '/ajax/gw-light.php?method=deezer.pageAlbum&input=3&api_version=1.0&api_token='
+                        '/ajax/gw-light.php?method=__GW_METHOD__&input=3&api_version=1.0&api_token='
                         + token + '&cid=' + Math.floor(Math.random() * 1e9),
                         {
                             method: 'POST', credentials: 'include',
                             headers: {'Content-Type': 'text/plain;charset=UTF-8', 'x-deezer-user': userId || ''},
-                            body: JSON.stringify({alb_id: __ALBUM_ID__, lang: 'us', tab: 0, header: true})
+                            body: JSON.stringify(__GW_BODY__)
                         }
                     );
-                    log('pageAlbum status: ' + ar.status);
+                    log('__GW_METHOD__ status: ' + ar.status);
                     var ad = await ar.json();
                     var songs = ad && ad.results && ad.results.SONGS;
                     log('SONGS present: ' + !!songs + ', count: ' + (songs && songs.data ? songs.data.length : 'n/a'));
                     var tracks = songs && songs.data;
                     if (tracks && tracks.length) {
                         log('calling enqueueTracks with ' + tracks.length + ' tracks');
-                        dzp.enqueueTracks(tracks, {object_type: 'album', object_id: '__ALBUM_ID__', radio: false});
+                        dzp.enqueueTracks(tracks, {object_type: '__OBJECT_TYPE__', object_id: '__OBJECT_ID__', radio: false});
                         log('enqueueTracks returned');
                         localStorage.setItem('__deezranbum', JSON.stringify({status: 'ok', logs: localStorage.getItem('__deezranbum_logs')}));
                         return;

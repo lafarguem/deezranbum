@@ -79,6 +79,7 @@ pub fn pick(
 
     let mut query = String::new();
     let mut selected: HashSet<u64> = initial_selected.cloned().unwrap_or(HashSet::new());
+    let cursor_shortcut = selected.is_empty();
     let mut cursor: usize = 0;
     let mut results: Vec<usize> = (0..albums.len()).collect();
     let mut dirty = false;
@@ -117,7 +118,7 @@ pub fn pick(
             frame.render_widget(input, chunks[0]);
 
             let status = Paragraph::new(format!(
-                "selected: {} | matches: {}/{}   [tab] select+down  [space] select  [enter] confirm  [esc] cancel",
+                "selected: {} | matches: {}/{}   [tab] select+down  [enter] confirm  [esc] cancel",
                 selected.len(),
                 results.len(),
                 albums.len()
@@ -130,13 +131,19 @@ pub fn pick(
                 .map(|&i| {
                     let a = &albums[i];
                     let mark = if selected.contains(&a.id) { "*" } else { " " };
-                    let line = Line::from(vec![
+                    let mut spans = vec![
                         Span::styled(format!("{mark} "), Style::default().fg(Color::Yellow)),
                         Span::raw(a.title.clone()),
                         Span::styled(" — ", Style::default().fg(Color::DarkGray)),
                         Span::styled(a.artist.name.clone(), Style::default().fg(Color::Cyan)),
-                    ]);
-                    ListItem::new(line)
+                    ];
+                    if let Some(tracks) = a.nb_tracks {
+                        spans.push(Span::styled(
+                            format!("  ({tracks} tracks)"),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                    ListItem::new(Line::from(spans))
                 })
                 .collect();
 
@@ -162,7 +169,7 @@ pub fn pick(
             KeyCode::Esc => break Vec::new(),
 
             KeyCode::Enter => {
-                if selected.is_empty() {
+                if selected.is_empty() && cursor_shortcut {
                     if let Some(&i) = results.get(cursor) {
                         break vec![albums[i].id];
                     }
@@ -188,15 +195,6 @@ pub fn pick(
                     }
                     if !results.is_empty() {
                         cursor = (cursor + 1).min(results.len() - 1);
-                    }
-                }
-            }
-
-            KeyCode::Char(' ') => {
-                if let Some(&i) = results.get(cursor) {
-                    let id = albums[i].id;
-                    if !selected.insert(id) {
-                        selected.remove(&id);
                     }
                 }
             }

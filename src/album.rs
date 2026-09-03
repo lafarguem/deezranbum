@@ -8,7 +8,10 @@ use crate::{
     QueueBehaviours,
     error::{AppError, AppResult},
     picker, queue, session,
-    storage::{Album, ApiAlbum, AppState, UserAlbum, load_state, save_state},
+    storage::{
+        Album, ApiAlbum, ApiPlaylist, AppState, ItemKind, UserAlbum, load_state, playlist_key,
+        save_state,
+    },
 };
 use chrono::{Duration, NaiveDate, Utc};
 use futures::stream::{self, StreamExt};
@@ -37,6 +40,7 @@ struct DeezerResponse {
 }
 
 pub struct AlbumFilters {
+    pub kind: Option<ItemKind>,
     pub min_duration: Option<u64>,
     pub max_duration: Option<u64>,
     pub before: Option<NaiveDate>,
@@ -67,7 +71,8 @@ pub async fn get_albums(state: &mut AppState, force_fetch: bool) -> AppResult<Ve
     let album_data = user_albums.data;
     let now = Utc::now().naive_utc();
     let ff = force_fetch || (now - state.last_redirect_update > Duration::days(30));
-    let albums = update_albums(state, album_data, &client, ff).await;
+    let mut albums = update_albums(state, album_data, &client, ff).await;
+    albums.extend(update_playlists(state, &client, ff).await);
     if ff {
         state.last_redirect_update = now;
     }
@@ -90,10 +95,13 @@ struct DeezerError {
     message: String,
 }
 
-async fn update_album(id: &u64, client: &Client) -> std::result::Result<Album, Box<dyn Error>> {
+async fn fetch_resource(
+    path: &str,
+    client: &Client,
+) -> std::result::Result<String, Box<dyn Error>> {
     for attempt in 0..MAX_RETRIES {
         let body = client
-            .get(format!("{}/album/{}", BASE_URL, id))
+            .get(format!("{}{}", BASE_URL, path))
             .send()
             .await?
             .text()
@@ -103,19 +111,83 @@ async fn update_album(id: &u64, client: &Client) -> std::result::Result<Album, B
         // (quota, unknown album, …) rather than an HTTP error status.
         if let Ok(err) = serde_json::from_str::<DeezerErrorBody>(&body) {
             if err.error.code == QUOTA_EXCEEDED_CODE {
-                // Exponential backoff, then retry the same album.
+                // Exponential backoff, then retry the same resource.
                 let delay = 250u64 * 2u64.pow(attempt);
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 continue;
             }
-            return Err(format!("deezer error for album {id}: {}", err.error.message).into());
+            return Err(format!("deezer error for {path}: {}", err.error.message).into());
         }
 
-        let api: ApiAlbum = serde_json::from_str(&body)?;
-        return Ok(Album::from_api(*id, api));
+        return Ok(body);
     }
 
-    Err(format!("album {id}: rate limited, gave up after {MAX_RETRIES} retries").into())
+    Err(format!("{path}: rate limited, gave up after {MAX_RETRIES} retries").into())
+}
+
+async fn update_album(id: &u64, client: &Client) -> std::result::Result<Album, Box<dyn Error>> {
+    let body = fetch_resource(&format!("album/{id}"), client).await?;
+    let api: ApiAlbum = serde_json::from_str(&body)?;
+    Ok(Album::from_api(*id, api))
+}
+
+pub async fn fetch_playlist(
+    id: u64,
+    client: &Client,
+) -> std::result::Result<Album, Box<dyn Error>> {
+    let body = fetch_resource(&format!("playlist/{id}"), client).await?;
+    let api: ApiPlaylist = serde_json::from_str(&body)?;
+    Ok(Album::from_playlist(api))
+}
+
+pub async fn fetch_user_playlists(
+    user_id: &str,
+    client: &Client,
+) -> std::result::Result<Vec<ApiPlaylist>, Box<dyn Error>> {
+    #[derive(Deserialize)]
+    struct PlaylistList {
+        #[serde(default)]
+        data: Vec<ApiPlaylist>,
+    }
+    let body = fetch_resource(&format!("user/{user_id}/playlists?limit=1000"), client).await?;
+    let list: PlaylistList = serde_json::from_str(&body)?;
+    Ok(list.data)
+}
+
+async fn update_playlists(state: &AppState, client: &Client, fetch_all: bool) -> Vec<Album> {
+    let mut playlists: Vec<Album> = Vec::new();
+    let mut missing: Vec<u64> = Vec::new();
+
+    for id in &state.playlist_ids {
+        if !fetch_all
+            && let Some(p) = state.albums.get(&playlist_key(*id))
+            && p.has_metadata()
+        {
+            playlists.push(p.clone());
+        } else {
+            missing.push(*id);
+        }
+    }
+
+    let resolved: Vec<Album> = stream::iter(missing)
+        .map(|id| {
+            let cached = state.albums.get(&playlist_key(id)).cloned();
+            async move {
+                match fetch_playlist(id, client).await {
+                    Ok(playlist) => playlist,
+                    Err(e) => {
+                        eprintln!("warning: {e}; using partial metadata");
+                        cached.unwrap_or_else(|| Album::with_id(playlist_key(id)))
+                    }
+                }
+            }
+        })
+        .buffered(FETCH_CONCURRENCY)
+        .collect()
+        .await;
+
+    playlists.extend(resolved);
+    playlists
 }
 
 async fn update_albums(
@@ -156,6 +228,11 @@ async fn update_albums(
 }
 
 fn check_filters(album: &Album, filters: &AlbumFilters) -> bool {
+    if let Some(kind) = filters.kind
+        && album.kind != kind
+    {
+        return false;
+    }
     if let Some(date) = filters.after {
         match album.release_date {
             Some(rd) if rd >= date => {}
@@ -272,11 +349,11 @@ fn prompt_queue(queue: QueueBehaviours) -> bool {
     }
 }
 
-pub fn handle_queue(album_id: &u64, queue: QueueBehaviours, debug: bool) {
+pub fn handle_queue(album: &Album, queue: QueueBehaviours, debug: bool) {
     if !prompt_queue(queue) {
         return;
     }
-    match crate::queue::add_to_queue(album_id, debug) {
+    match crate::queue::add_to_queue(album, debug) {
         Ok(()) => println!("Added to Deezer queue."),
         Err(queue::QueueError::NoDeezerTab) => {
             eprintln!("Warning: no Deezer tab found in Chrome — skipping queue.")
@@ -314,7 +391,7 @@ pub async fn next(
 
     for album in chosen {
         println!("{}", album);
-        handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
+        handle_queue(album, queue, debug);
         add_album(&mut state, album.id);
     }
     save_state(&state)?;
@@ -352,7 +429,7 @@ pub async fn pick(queue: QueueBehaviours, debug: bool, filters: &AlbumFilters) -
 
     for album in &chosen {
         println!("{}", album);
-        handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
+        handle_queue(album, queue, debug);
         add_album(&mut state, album.id);
     }
 
@@ -370,7 +447,7 @@ pub async fn search(query: &str, queue: QueueBehaviours, debug: bool) -> AppResu
     };
 
     println!("{}", album);
-    handle_queue(&album.real_id.unwrap_or(album.id), queue, debug);
+    handle_queue(album, queue, debug);
     add_album(&mut state, album.id);
     save_state(&state)?;
     Ok(())

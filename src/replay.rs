@@ -23,11 +23,7 @@ pub fn replay(from: Option<usize>, to: Option<usize>) -> AppResult<()> {
                 Some(album) => album,
                 None => &Album::with_id(*id),
             };
-            handle_queue(
-                &album.real_id.unwrap_or(album.id),
-                QueueBehaviours::True,
-                false,
-            )
+            handle_queue(album, QueueBehaviours::True, false)
         }
     }
     Ok(())
