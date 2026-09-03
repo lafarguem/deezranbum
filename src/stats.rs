@@ -45,7 +45,7 @@ fn get_stats<'a>(state: &'a AppState) -> (Stat<'a>, Stat<'a>, Stat<'a>) {
         let Some(album) = state.albums.get(album_id) else {
             continue;
         };
-        *by_album.entry(album.artist.name.as_str()).or_insert(0) += 1;
+        *by_album.entry(album.title.as_str()).or_insert(0) += plays.len() as u64;
         let total_duration: u64 = album.duration * plays.len() as u64;
         *by_artist.entry(album.artist.name.as_str()).or_insert(0) += total_duration;
         for genre in &album.genres {
